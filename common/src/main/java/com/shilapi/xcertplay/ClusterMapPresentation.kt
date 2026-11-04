@@ -132,7 +132,7 @@ internal class ClusterMapPresentation(
             if (plan == null) setBackgroundColor(placeholder)
             addView(ProgressBar(context).apply {
                 isIndeterminate = true
-                indeterminateTintList = ColorStateList.valueOf(waitingColor)
+                // API 19 无 indeterminateTintList（API 21），进度圈使用系统默认配色
                 contentDescription = context.getString(R.string.cluster_waiting_for_map)
             }, FrameLayout.LayoutParams((40 * density).toInt(), (40 * density).toInt(), Gravity.CENTER))
         }

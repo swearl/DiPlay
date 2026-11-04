@@ -3616,8 +3616,7 @@ open class CarPlayHostActivity : Activity() {
             max = (values.size - 1).coerceAtLeast(0)
             progress = selectedIndex
             splitTrack = false
-            progressTintList = ColorStateList.valueOf(MENU_ACCENT)
-            thumbTintList = ColorStateList.valueOf(MENU_ACCENT)
+            // 精简移植：progress/thumbTintList 为 API 21+，进度条使用系统默认配色
             setOnSeekBarChangeListener(
                 object : SeekBar.OnSeekBarChangeListener {
                     override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
@@ -4083,7 +4082,7 @@ open class CarPlayHostActivity : Activity() {
                 textSize = 18f
                 setTextColor(MENU_PRIMARY)
                 setHintTextColor(MENU_SECONDARY)
-                backgroundTintList = ColorStateList.valueOf(MENU_ACCENT)
+                // 精简移植：backgroundTintList 为 API 21+，降级使用系统默认下划线配色
                 minHeight = dp(48)
                 isSingleLine = true
                 inputType = when {
@@ -4168,10 +4167,8 @@ open class CarPlayHostActivity : Activity() {
                 text = label
                 textSize = 18f
                 setTextColor(MENU_SECONDARY)
-                buttonTintList = ColorStateList(
-                    arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
-                    intArrayOf(MENU_ACCENT, MENU_SECONDARY),
-                )
+                // 精简移植：buttonTintList 为 API 21+，改用自绘 radio drawable 保持强调色
+                SettingsWidgets.applyRadioAccent(this, MENU_ACCENT, MENU_SECONDARY)
                 tag = mode
                 isChecked = wirelessHotspotMode == mode
             }

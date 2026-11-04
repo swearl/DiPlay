@@ -101,6 +101,40 @@ object SettingsWidgets {
      * Replaces the platform switch (about a 36x14dp track) with a 60x34dp track and a 28dp thumb,
      * so the state reads at arm's length on a head unit.
      */
+    /**
+     * 单选按钮强调色：用状态绘制的自绘 radio drawable 替换 buttonTintList
+     * （CompoundButton.setButtonTintList 为 API 21+，Android 4.4 上抛 NoSuchMethodError）。
+     * 选中：描边圆环 + 中心圆点（LayerDrawable + setLayerInset，纯 API 19 API）；
+     * 未选：仅描边圆环；禁用：整体降透明。
+     */
+    fun applyRadioAccent(button: android.widget.CompoundButton, checkedColor: Int, uncheckedColor: Int) {
+        val density = button.resources.displayMetrics.density
+        fun px(value: Int) = (value * density).roundToInt()
+        fun ring(color: Int) = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(Color.TRANSPARENT)
+            setStroke(px(2), color)
+        }
+        fun dot(color: Int) = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(color)
+        }
+        fun checkedDrawable() = android.graphics.drawable.LayerDrawable(
+            arrayOf(ring(checkedColor), dot(checkedColor)),
+        ).apply {
+            val inset = px(5)
+            setLayerInset(1, inset, inset, inset, inset)
+        }
+        button.buttonDrawable = android.graphics.drawable.StateListDrawable().apply {
+            addState(
+                intArrayOf(-android.R.attr.state_enabled),
+                ring(ColorBlend.setAlphaComponent(uncheckedColor, 0x61)),
+            )
+            addState(intArrayOf(android.R.attr.state_checked), checkedDrawable())
+            addState(intArrayOf(), ring(uncheckedColor))
+        }
+    }
+
     fun applyLargeSwitchStyle(switch: Switch, thumbOn: Int, thumbOff: Int, trackOn: Int, trackOff: Int) {
         val density = switch.resources.displayMetrics.density
         fun px(value: Int) = (value * density).roundToInt()
@@ -111,6 +145,20 @@ object SettingsWidgets {
             addState(intArrayOf(-android.R.attr.state_enabled), thumb(ColorBlend.setAlphaComponent(thumbOff, 0x61)))
             addState(intArrayOf(android.R.attr.state_checked), thumb(thumbOn))
             addState(intArrayOf(), thumb(thumbOff))
+        }
+        // KitKat 的 Switch 无 showText（API 21 才有），总是测量并绘制 on/off 文本，
+        // 且 thumb 宽度由文本推导（mThumbWidth = maxTextWidth + 2×thumbTextPadding），
+        // 与 thumb drawable 固有尺寸无关，导致轨道宽度不受 switchMinWidth 控制。
+        // 置空 on/off 文本后 maxTextWidth = 0，宽度完全由 switchMinWidth 决定，也不再绘制文字。
+        switch.textOn = ""
+        switch.textOff = ""
+        // 反射设置 mThumbTextPadding = 14dp：滑块宽度 = 0 + 14×2 = 28dp，
+        // 轨道 56dp（下方 switchMinWidth）恰为滑块的 2 倍；目标设备固定为 Android 4.4，字段确认存在
+        runCatching {
+            Switch::class.java.getDeclaredField("mThumbTextPadding").apply {
+                isAccessible = true
+                set(switch, px(14))
+            }
         }
         // 轨道宽度为滑块直径（28dp）的 2 倍
         switch.switchMinWidth = px(56)
@@ -246,10 +294,8 @@ object SettingsWidgets {
                 this.text = text
                 textSize = 17f
                 setTextColor(theme.textSecondary)
-                buttonTintList = ColorStateList(
-                    arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
-                    intArrayOf(theme.accent, theme.textSecondary),
-                )
+                // API 19 无 buttonTintList（API 21），改用自绘 radio drawable 保持强调色
+                applyRadioAccent(this, theme.accent, theme.textSecondary)
                 tag = value
                 isChecked = value == selected
             }
@@ -330,8 +376,7 @@ object SettingsWidgets {
             max = CarPlayDisplayScale.MAX_PERCENT - CarPlayDisplayScale.MIN_PERCENT
             progress = initial - CarPlayDisplayScale.MIN_PERCENT
             splitTrack = false
-            progressTintList = ColorStateList.valueOf(theme.accent)
-            thumbTintList = ColorStateList.valueOf(theme.accent)
+            // API 19 无 progress/thumbTintList（API 21），进度条使用系统默认配色
             setOnSeekBarChangeListener(
                 object : SeekBar.OnSeekBarChangeListener {
                     override fun onProgressChanged(sb: SeekBar, progress: Int, fromUser: Boolean) {

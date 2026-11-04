@@ -43,8 +43,7 @@ internal class CarPlayPicturePanel(
                 progress = CarPlayPicture.value(prefs, key) - range.first
                 contentDescription = context.getString(labels[index])
                 isEnabled = adjustmentsAvailable
-                progressTintList = android.content.res.ColorStateList.valueOf(palette.overlayAccent)
-                thumbTintList = android.content.res.ColorStateList.valueOf(palette.overlayAccent)
+                // API 19 无 progress/thumbTintList（API 21），进度条使用系统默认配色
             }
             fun updateLabel(value: Int) { label.text = "${context.getString(labels[index])}: $value" }
             updateLabel(CarPlayPicture.value(prefs, key))
