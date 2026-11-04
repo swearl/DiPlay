@@ -1,4 +1,4 @@
-package com.shilapi.xcertplay.network
+﻿package com.shilapi.xcertplay.network
 
 import android.content.Context
 import android.net.nsd.NsdManager
@@ -19,6 +19,7 @@ import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.nio.charset.StandardCharsets
+import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.LinkedBlockingQueue
@@ -152,7 +153,9 @@ class CarPlayBonjour(
     private val services = LinkedBlockingQueue<NsdServiceInfo>()
     private val interfaceServices = LinkedBlockingQueue<Pair<CarPlayBonjourEndpoint, InetAddress>>()
     private val discoveryEvents = LinkedBlockingQueue<CarPlayBonjourEvent.Discovery>(32)
-    private val seenServices = ConcurrentHashMap.newKeySet<String>()
+    // 精简移植：ConcurrentHashMap.newKeySet 为 API 24+，改用 newSetFromMap 等价实现。
+    private val seenServices: MutableSet<String> =
+        Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
     private val lifecycleLock = Any()
     private val localAdvertisedAddress = advertisedHostAddress()
     private val advertisedAddresses = (listOfNotNull(localAdvertisedAddress) + additionalAddresses).distinct()
@@ -170,9 +173,10 @@ class CarPlayBonjour(
             "bonjourAddressMismatch=${addressMismatchCount.get()} connectProbes=${probeCount.get()} " +
             "connectProbe2xx=${successfulProbeCount.get()} lastProbe=${lastProbe.get()} " +
             "mdnsFamilies=$publishedFamilies"
-    private val multicastLock = (context.applicationContext ?: context)
-        .getSystemService(WifiManager::class.java)
-        .createMulticastLock("carplay-bonjour").apply { setReferenceCounted(false) }
+    private val multicastLock =
+        ((context.applicationContext ?: context).getSystemService(Context.WIFI_SERVICE) as? WifiManager)
+            ?.createMulticastLock("carplay-bonjour")
+            ?.apply { setReferenceCounted(false) }
 
     private var started = false
     @Volatile
@@ -273,7 +277,7 @@ class CarPlayBonjour(
             if (started) return
             started = true
             try {
-                multicastLock.acquire()
+                multicastLock?.acquire()
                 if (useInterfaceMdns) {
                     requireNotNull(localAdvertisedAddress) {
                         "Interface mDNS requires a local advertised address"
@@ -324,10 +328,10 @@ class CarPlayBonjour(
                 }
                 worker?.interrupt()
                 worker = null
-                interfaceMdns.forEach { dns -> runCatching { dns.close() } }
+                for (dns in interfaceMdns) runCatching { dns.close() }
                 interfaceMdns.clear()
                 publishedFamilies = "none"
-                if (multicastLock.isHeld) multicastLock.release()
+                if (multicastLock?.isHeld == true) multicastLock.release()
                 throw error
             }
         }
@@ -358,9 +362,9 @@ class CarPlayBonjour(
             workerToJoin = worker
             worker = null
             workerToJoin?.interrupt()
-            if (multicastLock.isHeld) multicastLock.release()
+            if (multicastLock?.isHeld == true) multicastLock.release()
         }
-        dnsToClose.forEach { dns -> runCatching { dns.close() } }
+        for (dns in dnsToClose) runCatching { dns.close() }
         workerToJoin?.let(::joinWorker)
     }
 
@@ -370,7 +374,7 @@ class CarPlayBonjour(
             serviceName = config.deviceName
             serviceType = AIRPLAY_SERVICE_TYPE
             port = config.port
-            CarPlayBonjourProtocol.airPlayTxtRecords(config, identity).forEach { (key, value) ->
+            for ((key, value) in CarPlayBonjourProtocol.airPlayTxtRecords(config, identity)) {
                 setAttribute(key, value)
             }
             localAdvertisedAddress?.let(::setHost)
@@ -438,10 +442,8 @@ class CarPlayBonjour(
         if (port !in 1..65535) return
         val serviceName = resolved.serviceName ?: service.serviceName ?: return
         val host = address.hostAddress ?: return
-        val bluetoothId = resolved.attributes
-            ?.get("id")
-            ?.let(::decodeTxtValue)
-            ?.takeIf { it.isNotBlank() }
+        // 精简移植：NsdServiceInfo.getAttributes 为 API 21+，API 19 无法读取 NSD TXT 记录，降级为空。
+        val bluetoothId: String? = null
         val endpoint = CarPlayBonjourEndpoint(
             serviceName = serviceName,
             host = host,
@@ -643,9 +645,6 @@ class CarPlayBonjour(
             Log.w(TAG, "CarPlay Bonjour event callback failed", error)
         }
     }
-
-    private fun decodeTxtValue(value: ByteArray): String =
-        String(value, StandardCharsets.UTF_8).trimEnd('\u0000')
 
     private fun joinWorker(worker: Thread) {
         if (worker === Thread.currentThread()) return

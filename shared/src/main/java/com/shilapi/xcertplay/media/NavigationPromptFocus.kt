@@ -6,14 +6,16 @@ import android.media.AudioManager
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import com.shilapi.xcertplay.compat.AudioAttributesCompat
 import com.shilapi.xcertplay.compat.AudioFocusRequestCompat
 
 /** The attributes the navigation renderer plays with, for a focus request made before its track exists. */
-internal fun navigationRouteAttributes(navigationChannel: Int): AudioAttributes =
-    LegacyAudioFallback.attributes(navigationChannel) ?: AudioAttributes.Builder()
-        .setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
-        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-        .build()
+// 精简移植：AudioAttributes 为 API 21+，改用 int 语义载体 AudioAttributesCompat
+internal fun navigationRouteAttributes(navigationChannel: Int): AudioAttributesCompat =
+    LegacyAudioFallback.attributes(navigationChannel) ?: AudioAttributesCompat(
+        usage = AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE,
+        contentType = AudioAttributes.CONTENT_TYPE_SPEECH,
+    )
 
 /**
  * Opt-in audio focus for navigation prompts (#946, #545). Navigation audio takes no focus by default,
@@ -27,7 +29,7 @@ internal class NavigationPromptFocus(
     context: Context?,
     private val promptFocusEnabled: Boolean,
     private val audioFocusEnabled: Boolean,
-    private val attributes: () -> AudioAttributes,
+    private val attributes: () -> AudioAttributesCompat,
     private val report: (String) -> Unit = {},
     private val releaseDelayMillis: Long = RELEASE_DELAY_MILLIS,
     private val timeoutMillis: Long = TIMEOUT_MILLIS,

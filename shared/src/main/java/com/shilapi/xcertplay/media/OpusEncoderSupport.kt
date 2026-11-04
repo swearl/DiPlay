@@ -29,10 +29,16 @@ object OpusEncoderSupport {
         }.getOrDefault(false)
     }
 
-    private fun platformAvailable(): Boolean =
-        MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.any { info ->
-            info.isEncoder && info.supportedTypes.any {
-                it.equals(MediaFormat.MIMETYPE_AUDIO_OPUS, ignoreCase = true)
+    private fun platformAvailable(): Boolean {
+        // 精简移植：MediaCodecList(codecInfos) 构造器为 API 21+，改用 API 19 的静态方法遍历
+        val count = MediaCodecList.getCodecCount()
+        for (index in 0 until count) {
+            val info = MediaCodecList.getCodecInfoAt(index)
+            if (!info.isEncoder) continue
+            for (type in info.supportedTypes) {
+                if (type.equals(MediaFormat.MIMETYPE_AUDIO_OPUS, ignoreCase = true)) return true
             }
         }
+        return false
+    }
 }

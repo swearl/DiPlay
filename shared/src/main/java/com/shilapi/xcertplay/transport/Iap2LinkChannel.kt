@@ -233,7 +233,8 @@ class Iap2LinkChannel private constructor(
                 is Iap2LinkEngine.Event.Session -> {
                     if (event.sessionId != Iap2LinkEngine.FILE_TRANSFER_SESSION_ID) continue
                     val outcome = fileTransfers.accept(event.bytes)
-                    outcome.replies.forEach { reply ->
+                    // 精简移植：Iterable#forEach 为 API 24 默认方法，改用 for 循环
+                    for (reply in outcome.replies) {
                         engine.sendSession(Iap2LinkEngine.FILE_TRANSFER_SESSION_ID, reply, nowMillis())
                     }
                     outcome.completed?.let { completed ->

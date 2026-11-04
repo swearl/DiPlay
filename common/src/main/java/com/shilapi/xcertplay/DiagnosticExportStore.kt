@@ -72,7 +72,8 @@ internal object DiagnosticExportStore {
                 ?: saveInDirectory(context, File(context.filesDir, "diagnostic-reports"), fileName, report, savedInApp = true).uri
             // Retain only the newest eight reports; never prune the export being returned.
             directory.listFiles()?.filter { it != file && it.isFile }
-                ?.sortedByDescending { it.lastModified() }?.drop(7)?.forEach { it.delete() }
+                ?.sortedByDescending { it.lastModified() }?.drop(7)
+        ?.let { files -> for (file in files) file.delete() } // API 19 无 Iterable#forEach 默认方法
             return SavedReport(uri, savedInApp = savedInApp, savedPath = if (savedInApp) null else file.absolutePath)
         } catch (error: Exception) {
             file.delete()

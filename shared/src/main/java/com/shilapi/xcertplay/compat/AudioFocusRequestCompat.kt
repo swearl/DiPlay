@@ -6,13 +6,19 @@ import android.os.Handler
 import android.os.Looper
 
 /**
+ * 精简移植：AudioAttributes 为 API 21+，目标平台 API 19 无法实例化。
+ * 用 int 保存 usage/contentType 语义，取值与 AudioAttributes 的同名常量一致，0 表示未设置。
+ */
+class AudioAttributesCompat(val usage: Int, val contentType: Int)
+
+/**
  * One audio focus request that works on every supported Android version.
  * 精简移植：目标平台 API 19 使用基于流的经典焦点调用（AudioFocusRequest 为 API 26+），
  * 回调统一移到 [handler] 线程上。
  */
 class AudioFocusRequestCompat(
     val gain: Int,
-    val attributes: AudioAttributes,
+    val attributes: AudioAttributesCompat,
     private val listener: AudioManager.OnAudioFocusChangeListener,
     private val handler: Handler,
 ) {

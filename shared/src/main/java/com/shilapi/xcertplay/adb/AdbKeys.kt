@@ -32,7 +32,8 @@ object AdbKeys {
     /** Loads the key from app-private storage, or makes one on first use. */
     @Synchronized
     fun load(context: Context): KeyPair {
-        val dir = File(context.noBackupFilesDir, DIR)
+        // 精简移植：noBackupFilesDir 为 API 21+，API 19 无自动备份机制，行为等价使用 filesDir
+        val dir = File(context.filesDir, DIR)
         val privateFile = File(dir, PRIVATE)
         val publicFile = File(dir, PUBLIC)
         runCatching {

@@ -1,4 +1,4 @@
-package com.shilapi.xcertplay.network
+﻿package com.shilapi.xcertplay.network
 
 import android.annotation.SuppressLint
 import android.content.Context
@@ -16,7 +16,7 @@ internal class ManualHotspotInterfaces(
     private val onDiagnostic: (String) -> Unit = {},
     private val configuredInterface: String? = null,
 ) : Closeable {
-    private val connectivity = context.getSystemService(ConnectivityManager::class.java)
+    private val connectivity = (context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager)
     private var lastLegacyDiagnostic: String? = null
     private var lastOwnershipDiagnostic: String? = null
 

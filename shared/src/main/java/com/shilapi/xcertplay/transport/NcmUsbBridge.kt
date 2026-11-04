@@ -452,14 +452,15 @@ class NcmUsbBridge internal constructor(
                     IphoneCarPlayConfiguration.TAG,
                     "ncm descriptor hostMac=${descriptorHostMac?.macString() ?: "unavailable"}",
                 )
-                // Apple's Ethernet function exposes control and data as alternate settings of the
-                // same interface id, so it must be claimed once and switched with setInterface.
+                // Apple's Ethernet function may expose control and data as alternate settings of the
+                // same interface id, so claiming that interface once is enough.
+                // 精简移植：API 19 无 setInterface/alternateSetting，同号接口只需 claim 一次。
                 val sameInterface = function.control.id == function.data.id
                 val first = if (sameInterface) function.data else function.control
                 val firstClaimed = retryUsbSetup { connection.claimInterface(first, true) }
                 Log.i(
                     IphoneCarPlayConfiguration.TAG,
-                    "claim iface=${first.id}/${first.alternateSetting} class=${first.interfaceClass}" +
+                    "claim iface=${first.id} class=${first.interfaceClass}" +
                         " subclass=${first.interfaceSubclass} proto=${first.interfaceProtocol} ok=${firstClaimed != null}" +
                         " attempts=${firstClaimed ?: USB_SETUP_ATTEMPTS}",
                 )
@@ -473,7 +474,7 @@ class NcmUsbBridge internal constructor(
                     val dataClaimed = retryUsbSetup { connection.claimInterface(function.data, true) }
                     Log.i(
                         IphoneCarPlayConfiguration.TAG,
-                        "claim iface=${function.data.id}/${function.data.alternateSetting}" +
+                        "claim iface=${function.data.id}" +
                             " class=${function.data.interfaceClass} ok=${dataClaimed != null}" +
                             " attempts=${dataClaimed ?: USB_SETUP_ATTEMPTS}",
                     )
@@ -484,17 +485,8 @@ class NcmUsbBridge internal constructor(
                     }
                     claimed.add(function.data)
                 }
-                val altSelected = retryUsbSetup { connection.setInterface(function.data) }
-                Log.i(
-                    IphoneCarPlayConfiguration.TAG,
-                    "setInterface iface=${function.data.id}/${function.data.alternateSetting} ok=${altSelected != null}" +
-                        " attempts=${altSelected ?: USB_SETUP_ATTEMPTS}",
-                )
-                if (altSelected == null) {
-                    throw IphoneUsbException.DeviceUnavailable(
-                        "Android could not select the NCM data alternate setting",
-                    )
-                }
+                // 精简移植：API 19 的 UsbDeviceConnection 没有 setInterface，也无法选择
+                // alternate setting；设备枚举出的接口即当前活动设置，claimInterface 后即可用。
                 Log.i(
                     IphoneCarPlayConfiguration.TAG,
                     "ncm status endpoint=${function.statusIn?.address?.let { "0x${it.toString(16)}" } ?: "none"}",

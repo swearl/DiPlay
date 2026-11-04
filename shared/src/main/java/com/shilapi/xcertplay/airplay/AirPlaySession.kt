@@ -803,10 +803,13 @@ class AirPlaySession(
         if (types == null || STREAM_TYPE_MAIN_SCREEN in types) mainScreenToken = null
         if (types == null || STREAM_TYPE_ALT_SCREEN in types) clearClusterContent()
         if (types == null) {
-            activeStreams.toList().forEach { media.onTeardown(this, it) }
+            // 精简移植：Iterable#forEach 为 API 24 默认方法，API 19 不可用，改用 for 循环
+            for (stream in activeStreams.toList()) media.onTeardown(this, stream)
             activeStreams.clear()
         } else {
-            types.forEach { type -> if (activeStreams.remove(type)) media.onTeardown(this, type) }
+            for (type in types) {
+                if (activeStreams.remove(type)) media.onTeardown(this, type)
+            }
         }
         if (STREAM_TYPE_ALT_SCREEN !in activeStreams) clearClusterContent()
         return RtspMessage.Response(status = 200)
@@ -866,7 +869,7 @@ class AirPlaySession(
         safeClose(eventSocket)
         eventSocket = null
         eventCipher = null
-        eventThreads.forEach { it.interrupt() }
+        for (thread in eventThreads) thread.interrupt()
         eventThreads.clear()
     }
 

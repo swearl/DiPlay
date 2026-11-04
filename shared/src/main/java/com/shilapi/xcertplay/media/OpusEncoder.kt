@@ -3,6 +3,7 @@ package com.shilapi.xcertplay.media
 import android.media.MediaCodec
 import android.media.MediaFormat
 import android.util.Log
+import java.nio.ByteBuffer
 
 /**
  * Encodes 20 ms chunks of 48 kHz mono PCM into raw Opus access units for the CarPlay
@@ -35,6 +36,9 @@ internal class OpusEncoder(bitrate: Int) : MicrophoneOpusEncoder {
         null
     }
     private val bufferInfo = MediaCodec.BufferInfo()
+    // 精简移植：getInputBuffer/getOutputBuffer 为 API 21+，改用缓冲区数组（codec.start() 后获取）
+    private var inputBuffers: Array<ByteBuffer?>? = null
+    private var outputBuffers: Array<ByteBuffer?>? = null
     private var presentationTimeUs = 0L
     private var closed = false
     private var outputPackets = 0
@@ -54,7 +58,7 @@ internal class OpusEncoder(bitrate: Int) : MicrophoneOpusEncoder {
             return emptyList()
         }
         if (inputIndex >= 0) {
-            val input = codec.getInputBuffer(inputIndex)
+            val input = (inputBuffers ?: codec.inputBuffers.also { inputBuffers = it })[inputIndex]
             if (input == null || pcm.size > input.remaining()) {
                 codec.queueInputBuffer(inputIndex, 0, 0, presentationTimeUs, 0)
             } else {
@@ -85,13 +89,14 @@ internal class OpusEncoder(bitrate: Int) : MicrophoneOpusEncoder {
             }
             when {
                 index == MediaCodec.INFO_TRY_AGAIN_LATER -> return output
-                index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> continue
+                // 输出格式变化后缓冲区数组需重新获取
+                index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> { outputBuffers = null; continue }
                 index >= 0 -> {
                     if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) {
                         codec.releaseOutputBuffer(index, false)
                         continue
                     }
-                    val buffer = codec.getOutputBuffer(index)
+                    val buffer = (outputBuffers ?: codec.outputBuffers.also { outputBuffers = it })[index]
                     if (buffer != null && bufferInfo.size > 0) {
                         val bytes = ByteArray(bufferInfo.size)
                         buffer.position(bufferInfo.offset)

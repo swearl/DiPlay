@@ -1,35 +1,22 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
-    <style name="Theme.Xcertplay" parent="android:Theme.Material.NoActionBar">
+    <!-- API 19 无 Material 主题，基础主题使用 Holo；Material 相关属性放在 values-v21 覆盖 -->
+    <style name="Theme.Xcertplay" parent="android:Theme.Holo.NoActionBar">
         <item name="android:fontFamily">sans</item>
-        <item name="android:colorAccent">#A6C8FF</item>
-        <item name="android:windowLightStatusBar">false</item>
-        <item name="android:navigationBarColor">#0C111B</item>
-        <item name="android:statusBarColor">#0C111B</item>
         <item name="android:windowBackground">@color/window_background_dark</item>
-        <!-- Without it, API 31+ draws a white splash before the dark Home screen. -->
-        <item name="android:windowSplashScreenBackground" tools:targetApi="31">#0C111B</item>
         <item name="android:windowActionModeOverlay">true</item>
     </style>
-    <style name="Theme.Xcertplay.Light">
-        <item name="android:colorAccent">#245A9C</item>
-        <item name="android:windowLightStatusBar">true</item>
-        <item name="android:windowLightNavigationBar">true</item>
-        <item name="android:navigationBarColor">#E9EEF6</item>
-        <item name="android:statusBarColor">#E9EEF6</item>
+    <style name="Theme.Xcertplay.Light" parent="android:Theme.Holo.Light.NoActionBar">
         <item name="android:windowBackground">@color/window_background_light</item>
-        <item name="android:windowSplashScreenBackground" tools:targetApi="31">#E9EEF6</item>
     </style>
-    <style name="Theme.Xcertplay.Dialog.Dark" parent="android:Theme.Material.Dialog.Alert">
+    <style name="Theme.Xcertplay.Dialog.Dark" parent="android:Theme.Holo.Dialog">
         <item name="android:fontFamily">sans</item>
-        <item name="android:colorAccent">#A6C8FF</item>
         <item name="android:windowBackground">@color/dialog_background_dark</item>
     </style>
-    <style name="Theme.Xcertplay.Dialog.Light" parent="android:Theme.Material.Light.Dialog.Alert">
+    <style name="Theme.Xcertplay.Dialog.Light" parent="android:Theme.Holo.Light.Dialog">
         <item name="android:fontFamily">sans</item>
-        <item name="android:colorAccent">#245A9C</item>
         <item name="android:windowBackground">@color/dialog_background_light</item>
     </style>
-    <style name="Theme.AdbCluster" parent="android:Theme.Material.NoActionBar">
+    <style name="Theme.AdbCluster" parent="android:Theme.Holo.NoActionBar">
         <item name="android:windowIsTranslucent">true</item>
         <item name="android:windowBackground">@android:color/transparent</item>
         <item name="android:windowNoTitle">true</item>

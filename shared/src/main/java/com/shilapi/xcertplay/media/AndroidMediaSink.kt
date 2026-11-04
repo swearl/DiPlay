@@ -1,11 +1,9 @@
-package com.shilapi.xcertplay.media
+﻿package com.shilapi.xcertplay.media
 
 import android.content.Context
 import android.media.AudioAttributes
-import android.media.AudioDeviceInfo
 import android.media.AudioFormat as AndroidAudioFormat
 import android.media.AudioManager
-import android.media.AudioRouting
 import android.media.AudioTrack
 import android.media.MediaCodec
 import android.media.MediaCodecList
@@ -21,9 +19,11 @@ import com.shilapi.xcertplay.airplay.MediaSink
 import com.shilapi.xcertplay.airplay.MicrophoneConfig
 import com.shilapi.xcertplay.airplay.VideoCodec
 import com.shilapi.xcertplay.airplay.toHexString
+import com.shilapi.xcertplay.compat.AudioAttributesCompat
 import com.shilapi.xcertplay.compat.AudioFocusRequestCompat
 import java.io.Closeable
 import java.nio.ByteBuffer
+import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.Executors
@@ -33,8 +33,13 @@ import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.TimeUnit
 
 /** 精简移植：目标平台 API 19 没有 AudioTrack 的属性读取接口，直接使用配置值。 */
-internal fun audioTrackAttributesForFocus(track: AudioTrack, configured: AudioAttributes): AudioAttributes =
+internal fun audioTrackAttributesForFocus(track: AudioTrack, configured: AudioAttributesCompat): AudioAttributesCompat =
     configured
+
+/** 精简移植：AudioAttributes 为 API 21+，按 usage 推导 legacy stream type（语音通话走通话流，其余走媒体流）。 */
+private fun legacyStreamTypeFor(usage: Int): Int =
+    if (usage == AudioAttributes.USAGE_VOICE_COMMUNICATION) AudioManager.STREAM_VOICE_CALL
+    else AudioManager.STREAM_MUSIC
 
 /** Owns one focus request for all eligible tracks in a CarPlay sink. */
 internal class AudioFocusCoordinator(
@@ -43,7 +48,7 @@ internal class AudioFocusCoordinator(
     private val muteMediaOnTransientLoss: Boolean = true,
     private val report: (String) -> Unit = {},
 ) {
-    private data class Entry(val channel: AudioChannel, val attributes: AudioAttributes, var appliedVolume: Float = FULL_VOLUME)
+    private data class Entry(val channel: AudioChannel, val attributes: AudioAttributesCompat, var appliedVolume: Float = FULL_VOLUME)
 
     private val manager = context?.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
     private val active = LinkedHashMap<AudioTrack, Entry>()
@@ -87,7 +92,7 @@ internal class AudioFocusCoordinator(
     }
 
     @Synchronized
-    fun acquire(track: AudioTrack, channel: AudioChannel, attributes: AudioAttributes) {
+    fun acquire(track: AudioTrack, channel: AudioChannel, attributes: AudioAttributesCompat) {
         if (closed || !enabled || manager == null || channel == AudioChannel.NAVIGATION) return
         active[track] = Entry(channel, attributes)
         refreshRequest()
@@ -222,7 +227,7 @@ class AndroidMediaSink(
     // Each downlink publishes its own reference; a mic must match that stream and sample rate.
     private val callEchoReferences = ConcurrentHashMap<AudioStreamId, EchoReference>()
     private val appContext = context?.applicationContext
-    private val audioManager = appContext?.getSystemService(AudioManager::class.java)
+    private val audioManager = (appContext?.getSystemService(Context.AUDIO_SERVICE) as? AudioManager)
     private val audioFocusCoordinator = AudioFocusCoordinator(
         appContext,
         audioFocusEnabled,
@@ -260,7 +265,9 @@ class AndroidMediaSink(
     private val videoReleasedListeners = ArrayList<() -> Unit>()
     // Closed decoders whose workers may still hold a codec on a surface until they exit; a surface
     // detach also waits for them.
-    private val closingVideoDecoders = ConcurrentHashMap.newKeySet<VideoDecoder>()
+    // 精简移植：ConcurrentHashMap.newKeySet 为 API 24+，用 Collections.newSetFromMap 替代
+    private val closingVideoDecoders: MutableSet<VideoDecoder> =
+        Collections.newSetFromMap(ConcurrentHashMap<VideoDecoder, Boolean>())
     // How long a surface detach waits for decoders to confirm, and then for an unconfirmed one to exit
     // after it is closed. Variables so tests can shorten them.
     internal var detachTimeoutNanos = 2_000_000_000L
@@ -272,7 +279,8 @@ class AndroidMediaSink(
     /** Apply a saved Audio setting to existing navigation tracks without reconnecting CarPlay. */
     fun setNavigationAttenuationDb(db: Int) {
         navigationAttenuationDb = NavigationAudioGain.clamp(db)
-        audioRenderers.values.forEach { it.setNavigationAttenuationDb(navigationAttenuationDb) }
+        // 精简移植：Iterable.forEach 为 API 24+，改用 for 循环
+        for (renderer in audioRenderers.values) renderer.setNavigationAttenuationDb(navigationAttenuationDb)
     }
     private val microphoneUplinks = ConcurrentHashMap<AudioStreamId, MicrophoneUplink>()
     private val audioModeLock = Any()
@@ -338,14 +346,21 @@ class AndroidMediaSink(
         val requests = ArrayList<SurfaceDetachRequest>()
         val steps = ArrayList<() -> Boolean>()
         synchronized(videoOwnershipLock) {
-            surfaces.entries.removeIf { it.value === surface } // future workers must not start on it
+            // 精简移植：Collection.removeIf 为 API 24+，改用迭代器循环删除
+            val surfaceIterator = surfaces.entries.iterator()
+            while (surfaceIterator.hasNext()) {
+                if (surfaceIterator.next().value === surface) surfaceIterator.remove()
+            }
             if (defaultSurface === surface) defaultSurface = null
             for ((type, decoder) in videoDecoders.entries.toList()) {
                 val request = decoder.requestDetach(surface, park = parkMain && type == MAIN_SCREEN_TYPE)
                 requests += request
                 steps += { settleDetach(type, decoder, request, deadline) }
             }
-            closingVideoDecoders.removeIf { it.exited }
+            val closingIterator = closingVideoDecoders.iterator()
+            while (closingIterator.hasNext()) {
+                if (closingIterator.next().exited) closingIterator.remove()
+            }
             closingVideoDecoders.toList().forEach { closing -> steps += { closing.awaitExitUntil(deadline + detachGraceNanos) } }
         }
         return SurfaceDetach(requests, steps)
@@ -408,7 +423,11 @@ class AndroidMediaSink(
     private fun onVideoDecoderExit(decoder: VideoDecoder) {
         val listeners = synchronized(videoOwnershipLock) {
             closingVideoDecoders -= decoder
-            videoDecoders.entries.removeIf { it.value === decoder }
+            // 精简移植：Collection.removeIf 为 API 24+，改用迭代器循环删除
+            val entryIterator = videoDecoders.entries.iterator()
+            while (entryIterator.hasNext()) {
+                if (entryIterator.next().value === decoder) entryIterator.remove()
+            }
             if (videoClosed && videoDecoders.isEmpty() && closingVideoDecoders.isEmpty()) {
                 videoReleasedListeners.toList().also { videoReleasedListeners.clear() }
             } else emptyList()
@@ -450,7 +469,10 @@ class AndroidMediaSink(
                 }
                 mirrorSurfaces[id] = surface
             }
-            lastVideoConfig[type]?.let { (codec, data) -> mirrorDecoders(type).forEach { it.configure(codec, data) } }
+            lastVideoConfig[type]?.let { (codec, data) ->
+                // 精简移植：Iterable.forEach 为 API 24+，改用 for 循环
+                for (decoder in mirrorDecoders(type)) decoder.configure(codec, data)
+            }
         }
     }
 
@@ -483,7 +505,8 @@ class AndroidMediaSink(
             val codec = pendingVideoCodec[type] ?: VideoCodec.H264
             lastVideoConfig[type] = codec to codecData
             videoDecoder(type).configure(codec, codecData)
-            mirrorDecoders(type).forEach { it.configure(codec, codecData) }
+            // 精简移植：Iterable.forEach 为 API 24+，改用 for 循环
+            for (decoder in mirrorDecoders(type)) decoder.configure(codec, codecData)
         }
     }
 
@@ -492,7 +515,8 @@ class AndroidMediaSink(
         synchronized(videoOwnershipLock) {
             if (videoClosed) return
             videoDecoder(type).submit(naluBytes)
-            mirrorDecoders(type).forEach { it.submit(naluBytes) }
+            // 精简移植：Iterable.forEach 为 API 24+，改用 for 循环
+            for (decoder in mirrorDecoders(type)) decoder.submit(naluBytes)
         }
     }
 
@@ -501,7 +525,8 @@ class AndroidMediaSink(
         synchronized(videoOwnershipLock) {
             if (videoClosed) return
             videoDecoder(type).submit(naluBytes, senderNanos, arrivalNanos)
-            mirrorDecoders(type).forEach { it.submit(naluBytes) }
+            // 精简移植：Iterable.forEach 为 API 24+，改用 for 循环
+            for (decoder in mirrorDecoders(type)) decoder.submit(naluBytes)
         }
     }
 
@@ -557,7 +582,8 @@ class AndroidMediaSink(
             // 精简移植：BydBluetoothSuspend 已删除，通话默认不处于免提挂起状态
             val speakerphoneCall = false
             if (config.audioType == "telephony" && !speakerphoneCall) enterCommunicationMode(id)
-            val uplink = microphoneUplinks.computeIfAbsent(id) {
+            // 精简移植：computeIfAbsent 为 API 24+，用 ConcurrentMap 的原子 getOrPut 扩展替代
+            val uplink = microphoneUplinks.getOrPut(id) {
                 MicrophoneUplink(config, onAudioDiagnostic,
                     speakerphoneCall = speakerphoneCall,
                     echoReference = if (config.audioType == TELEPHONY_AUDIO_TYPE) callEchoReferences[id] else null,
@@ -671,13 +697,15 @@ class AndroidMediaSink(
         // Audio workers close asynchronously; none may reacquire focus after their sink closes.
         audioFocusCoordinator.close()
         navigationPromptFocus.close()
-        audioRenderers.values.forEach(AudioRenderer::close)
+        // 精简移植：Iterable.forEach 为 API 24+，改用 for 循环
+        for (renderer in audioRenderers.values) renderer.close()
         audioRenderers.clear()
         callEchoReferences.clear()
         val hadMedia = synchronized(mediaAudioTypes) { mediaAudioTypes.isNotEmpty().also { mediaAudioTypes.clear() } }
         if (hadMedia) onMediaAudioChanged(false)
         try {
-            microphoneUplinks.values.forEach(MicrophoneUplink::close)
+            // 精简移植：Iterable.forEach 为 API 24+，改用 for 循环
+            for (uplink in microphoneUplinks.values) uplink.close()
         } finally {
             microphoneUplinks.clear()
             restoreAudioMode(null)
@@ -837,9 +865,10 @@ internal fun videoDecoderAttempts(
     lowLatencyDecoder?.let { add(DecoderAttempt(it, tuned = true)) }
     val mtkModes = maximumMtkMode.attempts()
     if (operatingRate > 0) {
-        mtkModes.forEach { add(DecoderAttempt(null, tuned = true, operatingRate, it)) }
+        // 精简移植：Iterable.forEach 为 API 24+，改用 for 循环
+        for (mode in mtkModes) add(DecoderAttempt(null, tuned = true, operatingRate, mode))
     }
-    mtkModes.forEach { add(DecoderAttempt(null, tuned = true, mtkMode = it)) }
+    for (mode in mtkModes) add(DecoderAttempt(null, tuned = true, mtkMode = mode))
     add(DecoderAttempt(codecName = null, tuned = false))
     softwareDecoder?.let { add(DecoderAttempt(it, tuned = false)) }
 }
@@ -929,6 +958,8 @@ private class VideoDecoder(
     // The decoder releases a frame only once later input arrives, so a frame queued before a still-screen
     // gap waits for the next one; such waits are not decode time and are left out of the stats.
     private var lastQueuedNanos = 0L
+    // 精简移植：getInputBuffer 为 API 21+，缓存 getInputBuffers() 数组，释放解码器后置空重建
+    private var cachedInputBuffers: Array<ByteBuffer?>? = null
     private var resumedAtNanos = 0L
     private var lastQueuedLocalNanos = 0L
     private val queue = VideoDecodeQueue()
@@ -1100,7 +1131,10 @@ private class VideoDecoder(
             // The codec is gone, so nothing renders to any surface or to the parking consumer any more.
             parking?.close()
             parking = null
-            queue.drain().forEach { (it as? VideoJob.DetachSurface)?.request?.complete(DetachOutcome.RELEASED) }
+            // 精简移植：Iterable.forEach 为 API 24+，改用 for 循环
+            for (job in queue.drain()) {
+                (job as? VideoJob.DetachSurface)?.request?.complete(DetachOutcome.RELEASED)
+            }
             runCatching { onExit(this) }
         }
     }
@@ -1116,7 +1150,9 @@ private class VideoDecoder(
         }
         // A codec can accept the rate and still fail once it runs (start errors may surface on
         // later calls): one that failed before its first frame with it is not given it again.
-        if (configuredRate > 0 && !renderedFrameLogged && error is MediaCodec.CodecException) {
+        // 精简移植：MediaCodec.CodecException 为 API 21+，统一按 IllegalStateException 处理；
+        // 配置了 operatingRate 且首帧未渲染时不再重试该速率。
+        if (configuredRate > 0 && !renderedFrameLogged) {
             dropOperatingRate("codec failed before its first frame")
         }
         releaseDecoder()
@@ -1293,7 +1329,8 @@ private class VideoDecoder(
                 setInteger(MediaFormat.KEY_PRIORITY, 0)
                 if (attempt.operatingRate > 0) setInteger(MediaFormat.KEY_OPERATING_RATE, attempt.operatingRate)
             }
-            mtkMode.formatKeys().forEach { setInteger(it, 1) }
+            // 精简移植：Iterable.forEach 为 API 24+，改用 for 循环
+            for (key in mtkMode.formatKeys()) setInteger(key, 1)
             csd.forEachIndexed { index, bytes -> setByteBuffer("csd-$index", ByteBuffer.wrap(bytes)) }
         }
 
@@ -1333,7 +1370,8 @@ private class VideoDecoder(
             }.getOrDefault(false)
             if (lowLatency) format.setInteger(MediaFormat.KEY_LOW_LATENCY, 1)
             val vendorKeys = if (attempt.tuned && vendorLowLatency) vendorLowLatencyKeys(codec.name.orEmpty()) else emptyList()
-            vendorKeys.forEach { format.setInteger(it, 1) }
+            // 精简移植：Iterable.forEach 为 API 24+，改用 for 循环
+            for (key in vendorKeys) format.setInteger(key, 1)
             configuredVendorLowLatency = vendorKeys.isNotEmpty()
             val pictureOrder = attempt.tuned && atOnce && listsPictureOrder(codec)
             if (pictureOrder) format.setInteger(PICTURE_ORDER_PARAMETER, 1)
@@ -1394,17 +1432,12 @@ private class VideoDecoder(
             when (outcome) {
                 DetachOutcome.NOT_RENDERING -> Unit
                 DetachOutcome.PARKED -> {
-                    val consumer = parking ?: ParkingOutput(width, height).also { parking = it }
-                    try {
-                        checkNotNull(decoder).setOutputSurface(consumer.surface)
-                        outputSurface = consumer.surface
-                        Log.i(TAG, "video decoder parked off screen")
-                    } catch (error: Exception) {
-                        Log.w(TAG, "video decoder could not park; releasing it", error)
-                        outcome = DetachOutcome.RELEASED
-                        outputSurface = null
-                        releaseDecoder()
-                    }
+                    // 精简移植：setOutputSurface 为 API 23+，API 19 不支持运行时切面到离屏消费者，
+                    // 走与原“驻留失败”相同的释放路径，等待下一帧重建解码器。
+                    Log.i(TAG, "video decoder parking unsupported on API 19; releasing it")
+                    outcome = DetachOutcome.RELEASED
+                    outputSurface = null
+                    releaseDecoder()
                 }
                 DetachOutcome.RELEASED -> {
                     outputSurface = null
@@ -1431,15 +1464,10 @@ private class VideoDecoder(
             Log.i(TAG, "video decoder detached from surface")
             return
         }
-        val codec = decoder
-        if (codec != null) {
-            try {
-                codec.setOutputSurface(surface)
-                Log.i(TAG, "video decoder output surface updated")
-                return
-            } catch (error: Exception) {
-                Log.w(TAG, "video decoder output surface update failed; reconfiguring", error)
-            }
+        // 精简移植：setOutputSurface 为 API 23+，API 19 不支持运行时切换输出表面；
+        // 记录日志并走既有的释放重建路径。
+        if (decoder != null) {
+            Log.i(TAG, "video decoder output surface change requires reconfigure on API 19")
         }
         releaseDecoder()
         queue.discardCurrentChain()
@@ -1484,7 +1512,8 @@ private class VideoDecoder(
             recover("video decoder input stalled")
             return
         }
-        val input = checkNotNull(codec.getInputBuffer(index)) { "Decoder input buffer unavailable" }
+        // 精简移植：getInputBuffer 为 API 21+，使用缓冲区数组（codec.start() 后获取）
+        val input = checkNotNull(inputBuffersOf(codec)[index]) { "Decoder input buffer unavailable" }
         input.clear()
         if (annexB.size <= input.remaining()) {
             input.put(annexB)
@@ -1576,7 +1605,9 @@ private class VideoDecoder(
                     localNs + delay.nanos
                 } else 0L
                 if (targetNs - now in 1..MAX_PACING_AHEAD_NS) {
-                    codec.releaseOutputBuffer(index, targetNs)
+                    // 精简移植：按时间戳延迟渲染的 releaseOutputBuffer(index, nanos) 为 API 21+，
+                    // 降级为立即渲染（时间戳平滑语义放弃，只保留显示）。
+                    codec.releaseOutputBuffer(index, render)
                 } else {
                     if (shown && delay != null && !heldOverGap && !pauseHeld) stats.onLate()
                     codec.releaseOutputBuffer(index, render)
@@ -1626,6 +1657,10 @@ private class VideoDecoder(
     }
 
     // Worker only; [outputLock] orders it against the output thread.
+    // 精简移植：getInputBuffer 为 API 21+，用缓冲区数组下标访问
+    private fun inputBuffersOf(codec: MediaCodec): Array<ByteBuffer?> =
+        cachedInputBuffers ?: codec.inputBuffers.also { cachedInputBuffers = it }
+
     private fun releaseDecoder() {
         backlogRecovery.reset()
         val codec: MediaCodec?
@@ -1635,6 +1670,7 @@ private class VideoDecoder(
             // The output thread returns from dequeueOutputBuffer within its timeout and then sees no codec.
             awaitNotDequeuing(codec)
         }
+        cachedInputBuffers = null
         configuredRate = 0
         configuredMtkMode = MtkDecoderMode.NONE
         configuredMtkCodec2LowLatency = false
@@ -1738,7 +1774,7 @@ private class AudioRenderer(
     private val pcmChannels = if (format.channels >= 2) 2 else 1
     private val voiceFilter = if (voiceFilter && format.sampleRate > 0) VoiceFilter(format.sampleRate, pcmChannels) else null
 
-    private var trackAttributes: AudioAttributes? = null
+    private var trackAttributes: AudioAttributesCompat? = null
     private var mappedChannel: AudioChannel? = null
     private val navigationPlaybackToken = NavigationPlayback.open()
     private var actualLegacyStreamType: Int? = null
@@ -1754,6 +1790,11 @@ private class AudioRenderer(
     @Volatile private var navigationAttenuationDb = 0
     private var appliedNavigationAttenuationDb: Int? = null
     private var pcm = ByteArray(64 * 1024)
+    // 精简移植：bufferSizeInFrames 为 API 23+，缓存轨道缓冲区字节数供统计换算
+    private var trackBufferBytes = 0
+    // 精简移植：getInputBuffer/getOutputBuffer 为 API 21+，缓存缓冲区数组，输出格式变化后刷新
+    private var cachedInputBuffers: Array<ByteBuffer?>? = null
+    private var cachedOutputBuffers: Array<ByteBuffer?>? = null
     private var playbackStarted = false
     private var prebufferBytes = 0
     private var startThresholdBytes = 0
@@ -1792,7 +1833,6 @@ private class AudioRenderer(
     private var clockTrim: MediaClockTrim? = null
     /** Called when this call's track is routed to the earpiece; the sink moves the call to the loudspeaker. */
     @Volatile var onRoutedToEarpiece: (() -> Unit)? = null
-    private var routingListener: AudioRouting.OnRoutingChangedListener? = null
     private var lastPcmWriteNs = 0L
     private var rebufferCount = 0
     private var rebufferPauseReportCount = 0
@@ -1814,7 +1854,14 @@ private class AudioRenderer(
         if (started) {
             packetsReceived.incrementAndGet()
             val previous = lastArrivalNs.getAndSet(now)
-            if (previous != 0L) maxArrivalGapMs.accumulateAndGet((now - previous) / 1_000_000L, ::maxOf)
+            if (previous != 0L) {
+                // 精简移植：AtomicLong.accumulateAndGet 为 API 24+，用 CAS 循环记录最大到达间隔
+                val gapMs = (now - previous) / 1_000_000L
+                while (true) {
+                    val current = maxArrivalGapMs.get()
+                    if (gapMs <= current || maxArrivalGapMs.compareAndSet(current, gapMs)) break
+                }
+            }
             newestRtpSample = sample
             // Hold short Wi-Fi bursts intact. If compressed audio remains >1.5s behind for
             // another 1.5s, skip only stale undecoded packets to catch up to the live song.
@@ -1963,55 +2010,42 @@ private class AudioRenderer(
         val plan = MediaAudioBuffer.plan(selection.channel == AudioChannel.MEDIA,
             format.sampleRate, format.channels, minBuffer, mediaBufferMillis)
         bytesPerSecond = format.sampleRate * frameBytes
+        trackBufferBytes = plan.trackBufferBytes
         val built: AudioTrack
         var routeLabel: String
         diagnosticStage = "track-build"
-        if (streamOverride == 0) {
-            attributes = audioAttributesFor(selection)
-            routeLabel = "usage"
-            built = AudioTrack.Builder()
-                .setAudioAttributes(attributes)
-                .setAudioFormat(pcmFormat(encoding, channelMask))
-                .setTransferMode(AudioTrack.MODE_STREAM)
-                .setBufferSizeInBytes(plan.trackBufferBytes)
-                .build()
-        } else {
-            val streamType = streamOverride
-            routeLabel = "streamType=$streamType"
-            built = LegacyAudioFallback.build(
-                createLegacy = {
-                    AudioTrack(streamType, format.sampleRate, channelMask, encoding,
-                        plan.trackBufferBytes, AudioTrack.MODE_STREAM)
-                },
-                isInitialized = { it.state == AudioTrack.STATE_INITIALIZED },
-                release = { it.release() },
-                createFallback = {
-                    diagnosticStage = "track-fallback-build"
-                    routeLabel = "streamType=$streamType(fallback=usage)"
-                    actualLegacyStreamType = null
-                    Log.w(TAG, "streamType=$streamType rejected by this ROM; falling back to usage-based track")
-                    attributes = audioAttributesFor(selection)
-                    AudioTrack.Builder()
-                        .setAudioAttributes(attributes)
-                        .setAudioFormat(pcmFormat(encoding, channelMask))
-                        .setTransferMode(AudioTrack.MODE_STREAM)
-                        .setBufferSizeInBytes(plan.trackBufferBytes)
-                        .build()
-                },
-            )
-        }
+        // 精简移植：AudioTrack.Builder 为 API 23+，AudioAttributes 为 API 21+，
+        // 统一用旧构造器：usage 映射为 legacy stream type（语音通话走通话流，其余走媒体流）。
+        val trackStreamType = streamOverride.takeIf { it != 0 } ?: legacyStreamTypeFor(usageFor(selection.channel))
+        routeLabel = "streamType=$trackStreamType" + if (streamOverride == 0) "(usage)" else ""
+        built = LegacyAudioFallback.build(
+            createLegacy = {
+                AudioTrack(trackStreamType, format.sampleRate, channelMask, encoding,
+                    plan.trackBufferBytes, AudioTrack.MODE_STREAM)
+            },
+            isInitialized = { it.state == AudioTrack.STATE_INITIALIZED },
+            release = { it.release() },
+            createFallback = {
+                diagnosticStage = "track-fallback-build"
+                routeLabel = "streamType=$trackStreamType(fallback=streamMusic)"
+                actualLegacyStreamType = null
+                Log.w(TAG, "streamType=$trackStreamType rejected by this ROM; falling back to music stream")
+                attributes = audioAttributesFor(selection)
+                AudioTrack(AudioManager.STREAM_MUSIC, format.sampleRate, channelMask, encoding,
+                    plan.trackBufferBytes, AudioTrack.MODE_STREAM)
+            },
+        )
         track = built
         if (mappedChannel == AudioChannel.PHONE) {
-            val listener = AudioRouting.OnRoutingChangedListener { routing -> checkCallRoute(routing.routedDevice) }
-            if (runCatching { built.addOnRoutingChangedListener(listener, Handler(Looper.getMainLooper())) }.isSuccess) {
-                routingListener = listener
-            }
+            // 精简移植：AudioRouting 监听为 API 23+，API 19 无法监听路由变化；
+            // 通话被路由到听筒的检测不可用（onRoutedToEarpiece 回退不再触发）。
         }
         applyNavigationAttenuation()
         diagnosticStage = "track-attributes"
         trackAttributes = audioTrackAttributesForFocus(built, attributes)
         diagnosticStage = "track-capacity"
-        val capacityBytes = built.bufferSizeInFrames * frameBytes
+        // 精简移植：bufferSizeInFrames 为 API 23+，用缓冲区字节数与每帧字节数换算
+        val capacityBytes = plan.trackBufferBytes
         startThresholdBytes = MediaAudioBuffer.startBytesFor(plan.startBytes, capacityBytes, PREBUFFER_WRITE_CHUNK_BYTES)
         // Only music plays long enough for the clocks to drift apart; calls keep their echo reference exact.
         clockTrim = if (mappedChannel == AudioChannel.MEDIA) MediaClockTrim(format.sampleRate, (startThresholdBytes / frameBytes).toLong(),
@@ -2082,7 +2116,7 @@ private class AudioRenderer(
     private fun audioAttributesFor(
         selection: AudioChannelSelection,
         streamOverride: Int,
-    ): AudioAttributes = LegacyAudioFallback.attributes(streamOverride) ?: audioAttributesFor(selection)
+    ): AudioAttributesCompat = LegacyAudioFallback.attributes(streamOverride) ?: audioAttributesFor(selection)
 
     private fun mappedSelection(): AudioChannelSelection {
         val mode = if (advancedAudioChannelMapping) {
@@ -2098,11 +2132,9 @@ private class AudioRenderer(
         return if (speakerphoneCall) AudioChannelMapper.playCallOnSpeaker(selection) else selection
     }
 
-    private fun audioAttributesFor(selection: AudioChannelSelection): AudioAttributes =
-        AudioAttributes.Builder()
-            .setUsage(usageFor(selection.channel))
-            .setContentType(contentTypeFor(selection.contentType))
-            .build()
+    // 精简移植：AudioAttributes 为 API 21+，用 int 语义载体保存 usage/contentType
+    private fun audioAttributesFor(selection: AudioChannelSelection): AudioAttributesCompat =
+        AudioAttributesCompat(usageFor(selection.channel), contentTypeFor(selection.contentType))
 
     /**
      * Shares a sink-level focus request across all active non-navigation renderers.
@@ -2122,12 +2154,6 @@ private class AudioRenderer(
     private fun abandonAudioFocus() {
         track?.let(audioFocusCoordinator::release)
     }
-
-    private fun pcmFormat(encoding: Int, channelMask: Int) = AndroidAudioFormat.Builder()
-        .setSampleRate(format.sampleRate)
-        .setChannelMask(channelMask)
-        .setEncoding(encoding)
-        .build()
 
     private fun streamType(): Int {
         val mode = if (advancedAudioChannelMapping) {
@@ -2262,7 +2288,8 @@ private class AudioRenderer(
             }
             return
         }
-        val input = codec.getInputBuffer(index) ?: return
+        // 精简移植：getInputBuffer 为 API 21+，使用缓冲区数组下标访问
+        val input = (cachedInputBuffers ?: codec.inputBuffers.also { cachedInputBuffers = it })[index] ?: return
         input.clear()
         if (payload.size <= input.remaining()) {
             input.put(payload)
@@ -2291,6 +2318,8 @@ private class AudioRenderer(
             when {
                 index == MediaCodec.INFO_TRY_AGAIN_LATER -> return
                 index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                    // 精简移植：输出格式变化后缓冲区数组需重新获取（API 19 数组语义）
+                    cachedOutputBuffers = null
                     // Vendor metadata inspection must not interrupt otherwise working playback.
                     if (decoderOutputReports < 4) runCatching {
                         val outputFormat = codec.outputFormat
@@ -2320,7 +2349,8 @@ private class AudioRenderer(
                     var copied = false
                     try {
                         if (size > 0) {
-                            val output = codec.getOutputBuffer(index)
+                            // 精简移植：getOutputBuffer 为 API 21+，使用缓冲区数组下标访问
+                            val output = (cachedOutputBuffers ?: codec.outputBuffers.also { cachedOutputBuffers = it })[index]
                             if (output != null) {
                                 if (size > pcm.size) pcm = ByteArray(size)
                                 output.position(info.offset)
@@ -2366,7 +2396,8 @@ private class AudioRenderer(
             }
             val writeStarted = System.nanoTime()
             diagnosticStage = "track-write"
-            val count = track.write(data, offset + written, writeLength, AudioTrack.WRITE_BLOCKING)
+            // 精简移植：带 writeMode 的 write 重载为 API 21+；MODE_STREAM 下旧 write 本身即阻塞语义
+            val count = track.write(data, offset + written, writeLength)
             maxWriteMs = maxOf(maxWriteMs, (System.nanoTime() - writeStarted) / 1_000_000L)
             if (count < 0) {
                 writeErrorsThisWindow++
@@ -2406,7 +2437,8 @@ private class AudioRenderer(
 
     private fun startPlayback(track: AudioTrack) {
         diagnosticStage = "track-play"
-        underrunsAtPlaybackStart = track.underrunCount
+        // 精简移植：getUnderrunCount 为 API 21+，恒为 0（欠载统计不可用）
+        underrunsAtPlaybackStart = 0
         headAtPlaybackStart = track.playbackHeadPosition
         clockTrim?.measureAgain()
         track.play()
@@ -2430,9 +2462,8 @@ private class AudioRenderer(
         }
     }
 
-    private fun checkCallRoute(device: AudioDeviceInfo?) {
-        if (device?.type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE) onRoutedToEarpiece?.invoke()
-    }
+    // 精简移植：AudioRouting/AudioDeviceInfo 为 API 23+，API 19 无法查询通话路由设备，
+    // 原听筒检测（checkCallRoute）不可用，onRoutedToEarpiece 不再触发。
 
     private fun trimClock(track: AudioTrack) {
         val trim = clockTrim ?: return
@@ -2479,7 +2510,8 @@ private class AudioRenderer(
     private fun maintainPlaybackBuffer() {
         val track = track ?: return
         if (bufferProgress.shouldRebuffer(mappedChannel == AudioChannel.MEDIA, playbackStarted,
-                track.underrunCount > underrunsAtPlaybackStart, queue.isEmpty(), track.playbackHeadPosition,
+                // 精简移植：getUnderrunCount 为 API 21+，恒为 false（欠载触发不可用）
+                false, queue.isEmpty(), track.playbackHeadPosition,
                 startThresholdBytes / 2L)) {
             // The hardware buffer has starved below the recovery floor. Pause without flushing
             // or discarding PCM, then use the configured start threshold again when music resumes.
@@ -2509,7 +2541,8 @@ private class AudioRenderer(
         val now = System.nanoTime()
         if (statsWindowStartNs == 0L) statsWindowStartNs = now
         if (!force && now - statsWindowStartNs < STATS_WINDOW_NS) return
-        val underruns = track?.underrunCount ?: 0
+        // 精简移植：getUnderrunCount 为 API 21+，恒为 0（欠载统计不可用）
+        val underruns = 0
         val lastRx = lastArrivalNs.get()
         val currentTrack = track
         val playbackHeadFrames = currentTrack?.playbackHeadPosition
@@ -2520,16 +2553,16 @@ private class AudioRenderer(
             previous?.let { (current - it) and 0xffff_ffffL }
         }
         val queuedFrames = playbackHeadFrames?.let { (totalWrittenFrames - it).coerceAtLeast(0L) }
-        // A route decided before the listener was added reaches no callback; the stats see it.
-        if (mappedChannel == AudioChannel.PHONE) runCatching { checkCallRoute(currentTrack?.routedDevice) }
+        // 精简移植：getRoutedDevice/AudioDeviceInfo 为 API 23+，API 19 无法查询路由设备，
+        // 原通话路由检测与 routeType 统计不可用（routeType 恒为 -1）。
         // "PHONE " marks the iPhone's own log lines, which the report drops, and it dropped every
         // call's playback line with it (#647).
         val channelName = if (mappedChannel == AudioChannel.PHONE) "CALL" else mappedChannel?.name
         val line = "audio stats audioType=${format.audioType} channel=$channelName " +
-            "routeType=${currentTrack?.routedDevice?.type ?: -1} codec=${format.codec} " +
+            "routeType=-1 codec=${format.codec} " +
             "trackState=${currentTrack?.state ?: -1} playState=${currentTrack?.playState ?: -1} " +
             "sampleRate=${currentTrack?.sampleRate ?: format.sampleRate} " +
-            "trackBufferFrames=${currentTrack?.bufferSizeInFrames ?: -1} " +
+            "trackBufferFrames=${trackBufferBytes / frameBytes} " +
             "rx=${packetsReceived.getAndSet(0)} " +
             "dropped=${packetsDropped.getAndSet(0)} underruns=+${underruns - statsLastUnderruns} queue=${queue.size} " +
             "playing=$playbackStarted maxGapMs=${maxArrivalGapMs.getAndSet(0)} " +
@@ -2610,8 +2643,6 @@ private class AudioRenderer(
         val track = track
         this.track = null
         if (track != null) {
-            routingListener?.let { listener -> runCatching { track.removeOnRoutingChangedListener(listener) } }
-            routingListener = null
             try {
                 track.pause()
             } catch (_: Exception) {

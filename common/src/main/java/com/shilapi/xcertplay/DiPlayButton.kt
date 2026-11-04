@@ -1,14 +1,12 @@
 package com.shilapi.xcertplay
 
 import android.content.Context
-import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
-import android.graphics.drawable.RippleDrawable
-import android.graphics.drawable.StateListDrawable
 import android.widget.Button
 import com.shilapi.xcertplay.compat.ColorBlend
+import com.shilapi.xcertplay.compat.CompatUi
 
 internal enum class DiPlayButtonKind { PRIMARY, SECONDARY, DANGER, TONAL_DANGER }
 
@@ -23,7 +21,6 @@ internal class DiPlayButton(context: Context) : Button(context) {
 
     init {
         isAllCaps = false
-        stateListAnimator = null
         typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
     }
 
@@ -73,22 +70,16 @@ internal class DiPlayButton(context: Context) : Button(context) {
         }
         val radius = minOf(24f * density, (if (height > 0) height else minHeight) * 20f / 56)
         setTextColor(text)
-        background = RippleDrawable(
-            ColorStateList.valueOf(palette.ripple),
-            GradientDrawable().apply {
-                setColor(fill)
-                cornerRadius = radius
-                setStroke((1 * density).toInt().coerceAtLeast(1), stroke)
-            },
-            null,
-        )
-        // Remote and D-pad users need to see where they are; touch mode never shows it.
-        foreground = StateListDrawable().apply {
-            addState(intArrayOf(android.R.attr.state_focused), GradientDrawable().apply {
-                setColor(Color.TRANSPARENT)
-                cornerRadius = radius
-                setStroke((3 * density).toInt(), palette.focusRing)
-            })
+        val shape = GradientDrawable().apply {
+            setColor(fill)
+            cornerRadius = radius
+            setStroke((1 * density).toInt().coerceAtLeast(1), stroke)
         }
+        // API 19 无 RippleDrawable/foreground：按压变色 + 焦点描边合入背景状态列表
+        background = CompatUi.pressable(shape, palette.ripple, GradientDrawable().apply {
+            setColor(Color.TRANSPARENT)
+            cornerRadius = radius
+            setStroke((3 * density).toInt(), palette.focusRing)
+        })
     }
 }

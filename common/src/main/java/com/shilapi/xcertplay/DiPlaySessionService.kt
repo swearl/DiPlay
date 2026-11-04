@@ -26,8 +26,8 @@ class DiPlaySessionService : Service() {
             .setContentTitle("DiPlay")
             .setContentText("CarPlay connection running")
             .setContentIntent(open).setOngoing(true)
-            // 精简移植：Notification.Action.Builder 为 API 20+，改用经典构造函数。
-            .addAction(Notification.Action(0, "Disconnect", stop)).build()
+            // 精简移植：addAction(Notification.Action) 为 API 23+，改用经典三参重载（API 16）。
+            .addAction(0, "Disconnect", stop).build()
         startForeground(1, notification)
         return START_NOT_STICKY
     }

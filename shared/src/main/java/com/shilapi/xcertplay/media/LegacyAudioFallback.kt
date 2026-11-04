@@ -1,8 +1,7 @@
 package com.shilapi.xcertplay.media
 
-import android.media.AudioAttributes
 import android.media.AudioManager
-import android.util.Log
+import com.shilapi.xcertplay.compat.AudioAttributesCompat
 
 /** A ROM can reject a legacy stream by throwing or returning an uninitialized track. */
 internal object LegacyAudioFallback {
@@ -25,15 +24,10 @@ internal object LegacyAudioFallback {
      * defined legacy stream IDs here. BYD audio policy can map these standard streams to vehicle outputs;
      * arbitrary channel numbers are not valid AudioAttributes legacy stream types.
      */
-    fun attributes(streamType: Int): AudioAttributes? {
+    fun attributes(streamType: Int): AudioAttributesCompat? {
         if (streamType !in AudioManager.STREAM_SYSTEM..AudioManager.STREAM_ACCESSIBILITY) return null
-        return try {
-            AudioAttributes.Builder().setLegacyStreamType(streamType).build()
-        } catch (error: Exception) {
-            Log.w(TAG, "legacy audio stream $streamType rejected; keeping usage routing", error)
-            null
-        }
+        // 精简移植：AudioAttributes 为 API 21+，API 19 无法构造 legacy 属性对象；
+        // 仅保留“选中该 legacy 流”的语义，usage/contentType 记为未设置（0）。
+        return AudioAttributesCompat(usage = 0, contentType = 0)
     }
-
-    private const val TAG = "xcertplay-usb"
 }

@@ -23,7 +23,7 @@ internal object ClusterMusicState {
             val hasTrack = !info.title.isNullOrBlank() || !info.artist.isNullOrBlank()
             val retained = if (hasTrack) artwork ?: state.artwork?.takeUnless { it.isRecycled } else null
             state = Snapshot(info, retained, if (changed) SystemClock.elapsedRealtime() else state.changedAt, state.revision + if (changed) 1 else 0)
-            listeners.toList().forEach { it(state) }
+            for (listener in listeners.toList()) listener(state)
         }
     }
 

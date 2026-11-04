@@ -65,15 +65,20 @@ object MtkDecoderTuning {
         candidatesByMime.getOrPut(mime.lowercase()) { listCandidates(mime) }
 
     private fun listCandidates(mime: String): List<MtkDecoderCandidate> = runCatching {
-        MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.mapNotNull { info ->
+        // 精简移植：MediaCodecList(codecInfos) 构造器为 API 21+，改用 API 19 的静态方法遍历
+        val result = ArrayList<MtkDecoderCandidate>()
+        val count = MediaCodecList.getCodecCount()
+        for (index in 0 until count) {
+            val info = MediaCodecList.getCodecInfoAt(index)
             // 精简移植：info.isAlias 为 API 29+ 属性，目标平台不做别名过滤。
             if (info.isEncoder ||
-                info.supportedTypes.none { it.equals(mime, ignoreCase = true) }) return@mapNotNull null
+                info.supportedTypes.none { it.equals(mime, ignoreCase = true) }) continue
             val lowLatency = runCatching {
                 info.getCapabilitiesForType(mime).isFeatureSupported("low-latency")
             }.getOrDefault(false)
-            MtkDecoderCandidate(info.name, lowLatency)
+            result.add(MtkDecoderCandidate(info.name, lowLatency))
         }
+        result
     }.getOrDefault(emptyList())
 }
 

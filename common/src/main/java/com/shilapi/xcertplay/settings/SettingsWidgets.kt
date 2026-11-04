@@ -85,19 +85,29 @@ object SettingsWidgets {
             alpha = (0.3f * 255).roundToInt()
         }
         switch.switchMinWidth = px(60)
-        switch.showText = false
-        switch.thumbTintList = switchStates(thumbOn, thumbOff)
-        switch.trackTintList = switchStates(trackOn, trackOff)
+        // API 19 无 showText（API 23）与 thumb/trackTintList（API 21）：
+        // 用状态绘制的 StateListDrawable 代替着色，保持开关三态颜色一致
+        fun thumb(color: Int) = InsetDrawable(GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setSize(px(28), px(28))
+            setColor(color)
+        }, thumbInset)
+        switch.thumbDrawable = android.graphics.drawable.StateListDrawable().apply {
+            addState(intArrayOf(-android.R.attr.state_enabled), thumb(ColorBlend.setAlphaComponent(thumbOff, 0x61)))
+            addState(intArrayOf(android.R.attr.state_checked), thumb(thumbOn))
+            addState(intArrayOf(), thumb(thumbOff))
+        }
+        fun track(color: Int) = GradientDrawable().apply {
+            cornerRadius = px(17).toFloat()
+            setSize(px(60), px(34))
+            setColor(color)
+        }
+        switch.trackDrawable = android.graphics.drawable.StateListDrawable().apply {
+            addState(intArrayOf(-android.R.attr.state_enabled), track(ColorBlend.setAlphaComponent(trackOff, 0x61)))
+            addState(intArrayOf(android.R.attr.state_checked), track(trackOn))
+            addState(intArrayOf(), track(trackOff))
+        }
     }
-
-    private fun switchStates(on: Int, off: Int) = ColorStateList(
-        arrayOf(
-            intArrayOf(-android.R.attr.state_enabled),
-            intArrayOf(android.R.attr.state_checked),
-            intArrayOf(),
-        ),
-        intArrayOf(ColorBlend.setAlphaComponent(off, 0x61), on, off),
-    )
 
     fun createSwitchRow(
         context: Context,
@@ -157,14 +167,16 @@ object SettingsWidgets {
             // The whole row is the target; the switch stays out of the focus order so D-pad stops once.
             switch.isFocusable = false
             row.isFocusable = true
-            row.background = android.graphics.drawable.RippleDrawable(
-                ColorStateList.valueOf(theme.ripple), null, android.graphics.drawable.ColorDrawable(Color.WHITE))
-            row.foreground = android.graphics.drawable.StateListDrawable().apply {
+            // API 19 无 RippleDrawable/View.foreground：按压变色与焦点描边合入背景状态列表
+            row.background = android.graphics.drawable.StateListDrawable().apply {
+                addState(intArrayOf(android.R.attr.state_pressed), android.graphics.drawable.ColorDrawable(
+                    ColorBlend.blendARGB(Color.WHITE, theme.ripple, 0.30f)))
                 addState(intArrayOf(android.R.attr.state_focused), android.graphics.drawable.GradientDrawable().apply {
                     setColor(Color.TRANSPARENT)
                     cornerRadius = theme.dp(context, 12).toFloat()
                     setStroke(theme.dp(context, 3), theme.focusRing)
                 })
+                addState(intArrayOf(), android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
             }
             row.setOnClickListener { if (switch.isEnabled) switch.toggle() }
             switch.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO

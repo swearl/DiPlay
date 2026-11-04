@@ -45,9 +45,13 @@ object CarPlayRotation {
         val limit = picture.maxSide?.let { minOf(it, longSide) } ?: longSide
         val mime = if (hevc) MediaFormat.MIMETYPE_VIDEO_HEVC else MediaFormat.MIMETYPE_VIDEO_AVC
         val decoders = runCatching {
-            MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.filter { info ->
-                !info.isEncoder && info.supportedTypes.any { it.equals(mime, ignoreCase = true) }
+            // API 19 无 MediaCodecList 构造器（API 21），用静态 getCodecCount/getCodecInfoAt
+            val list = mutableListOf<android.media.MediaCodecInfo>()
+            for (i in 0 until MediaCodecList.getCodecCount()) {
+                val info = MediaCodecList.getCodecInfoAt(i)
+                if (!info.isEncoder && info.supportedTypes.any { it.equals(mime, ignoreCase = true) }) list += info
             }
+            list
         }.getOrDefault(emptyList())
         // 与 AndroidMediaSink 的解码器选择保持一致：直接使用默认解码器，
         // 用经典 OMX.google./c2.android. 前缀判断是否为软件解码器（API 19 无 isSoftwareOnly/isHardwareAccelerated）。

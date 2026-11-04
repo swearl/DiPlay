@@ -1,4 +1,4 @@
-package com.shilapi.xcertplay.network
+﻿package com.shilapi.xcertplay.network
 
 import android.content.Context
 import android.net.wifi.WifiConfiguration
@@ -118,7 +118,7 @@ object CarHotspotConfigWrite {
     }
 
     private fun writeWithApp(context: Context, credentials: HotspotCredentials, log: (String) -> Unit): WriteOutcome {
-        val wifi = context.applicationContext.getSystemService(WifiManager::class.java)
+        val wifi = (context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager)
             ?: return WriteOutcome(Result.FAILED).also { log("car hotspot config: no Wi-Fi manager") }
         val managerType = WifiManager::class.java
         return writeApp(credentials,

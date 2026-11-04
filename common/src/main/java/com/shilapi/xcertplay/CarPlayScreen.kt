@@ -80,8 +80,8 @@ internal object CarPlayScreen {
         } else {
             append(" open=${screen.javaClass.simpleName} task=${screen.taskId}")
             append(" taskRoot=${runCatching { screen.isTaskRoot }.getOrNull()}")
-            // 精简移植：isInMultiWindowMode 为 API 24+ 方法，低版本上捕获 NoSuchMethodError
-            append(" multiWindow=${runCatching { screen.isInMultiWindowMode }.getOrNull()}")
+            // API 19 无 isInMultiWindowMode（API 24），恒为 false
+            append(" multiWindow=false")
             append(" display=${screen.window?.decorView?.display?.displayId}")
         }
     }

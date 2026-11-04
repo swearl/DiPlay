@@ -52,7 +52,8 @@ internal object UpdateClient {
             connection.useCaches = false
             val statusCode = connection.responseCode
             if (statusCode !in 200..299) throw IOException("Download from $url failed: $statusCode")
-            val total = connection.contentLengthLong.takeIf { it > 0 }
+            // API 19 无 getContentLengthLong（API 24），用 int 版本
+            val total = connection.contentLength.takeIf { it > 0 }?.toLong()
             if (total != null && total > MAXIMUM_DOWNLOAD_BYTES) throw IOException("Download from $url is too large")
             var written = 0L
             connection.inputStream.use { input ->

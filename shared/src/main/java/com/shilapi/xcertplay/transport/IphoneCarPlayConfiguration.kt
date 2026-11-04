@@ -1,6 +1,5 @@
 package com.shilapi.xcertplay.transport
 
-import android.hardware.usb.UsbConfiguration
 import android.hardware.usb.UsbConstants
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbEndpoint
@@ -8,10 +7,11 @@ import android.hardware.usb.UsbInterface
 import android.util.Log
 
 /**
- * Descriptor-based discovery of the iPhone's CarPlay configuration.
+ * Descriptor-based discovery of the iPhone's CarPlay USB interfaces.
  *
- * Configuration ids differ between iPhone models, so the configuration is identified by its
- * interfaces: Apple USB Multiplexor (USBMUX) plus the NCM/Ethernet function CarPlay uses.
+ * 精简移植：目标平台 Android 4.4（API 19）没有 UsbConfiguration 与 alternateSetting 概念，
+ * 因此直接在设备顶层 interface 上识别 CarPlay 所需的 Apple USB Multiplexor（USBMUX）
+ * 以及 NCM/Ethernet 功能；"找到完整功能组合"即等价于原来的"找到 CarPlay configuration"。
  */
 object IphoneCarPlayConfiguration {
     const val TAG = "xcertplay-usb"
@@ -27,34 +27,39 @@ object IphoneCarPlayConfiguration {
     private const val PREFERRED_USBMUX_OUT = 0x04
     private const val PREFERRED_USBMUX_IN = 0x85
 
-    fun find(device: UsbDevice): UsbConfiguration? {
-        val configurations = (0 until device.configurationCount).map(device::getConfiguration)
-        val chosen = configurations.firstOrNull { usbMuxInterface(it) != null && hasCdcNcm(it) && hasAppleEthernet(it) }
-            ?: configurations.firstOrNull { usbMuxInterface(it) != null && hasCdcNcm(it) }
+    /**
+     * 当设备顶层 interface 上出现 USBMUX + NCM 功能组合（即原 CarPlay configuration）时
+     * 返回该设备本身，否则返回 null。
+     */
+    fun find(device: UsbDevice): UsbDevice? {
+        val usbMux = usbMuxInterface(device)
+        val hasNcm = hasCdcNcm(device)
+        val found = usbMux != null && hasNcm
         Log.i(
             TAG,
-            "carplay config chosen=${chosen?.id} " +
-                "available=${configurations.map { it.id }} detail=${chosen?.let(::describe)}",
+            "carplay interfaces found=$found usbMux=${usbMux != null} ncm=$hasNcm " +
+                "appleEthernet=${hasAppleEthernet(device)} detail=${if (found) describe(device) else "none"}",
         )
-        return chosen
+        return if (found) device else null
     }
 
     /** Only CarPlay mode adds Apple Ethernet; iOS 17+ offers USBMUX and NCM without it (#634). */
-    fun isCarPlayMode(configuration: UsbConfiguration): Boolean =
-        usbMuxInterface(configuration) != null && hasCdcNcm(configuration) && hasAppleEthernet(configuration)
+    fun isCarPlayMode(device: UsbDevice): Boolean =
+        usbMuxInterface(device) != null && hasCdcNcm(device) && hasAppleEthernet(device)
 
-    fun describe(configuration: UsbConfiguration): String =
-        (0 until configuration.interfaceCount).joinToString(",") { index ->
-            val usbInterface = configuration.getInterface(index)
-            "${usbInterface.id}/${usbInterface.alternateSetting}" +
+    fun describe(device: UsbDevice): String =
+        // 精简移植：API 19 无 alternateSetting，描述里只保留接口编号与 class/subclass/protocol
+        (0 until device.interfaceCount).joinToString(",") { index ->
+            val usbInterface = device.getInterface(index)
+            "${usbInterface.id}" +
                 ":${usbInterface.interfaceClass.toString(16)}" +
                 ".${usbInterface.interfaceSubclass.toString(16)}" +
                 ".${usbInterface.interfaceProtocol.toString(16)}" +
                 "x${usbInterface.endpointCount}"
         }
 
-    fun usbMuxInterface(configuration: UsbConfiguration): UsbInterface? =
-        (0 until configuration.interfaceCount).map(configuration::getInterface).firstOrNull {
+    fun usbMuxInterface(device: UsbDevice): UsbInterface? =
+        (0 until device.interfaceCount).map(device::getInterface).firstOrNull {
             it.interfaceClass == USBMUX_CLASS &&
                 it.interfaceSubclass == USBMUX_SUBCLASS &&
                 it.interfaceProtocol == USBMUX_PROTOCOL
@@ -81,13 +86,13 @@ object IphoneCarPlayConfiguration {
         return if (out != null && input != null) out to input else null
     }
 
-    private fun hasCdcNcm(configuration: UsbConfiguration): Boolean =
-        (0 until configuration.interfaceCount).map(configuration::getInterface).any {
+    private fun hasCdcNcm(device: UsbDevice): Boolean =
+        (0 until device.interfaceCount).map(device::getInterface).any {
             it.interfaceClass == NCM_CONTROL_CLASS && it.interfaceSubclass == NCM_CONTROL_SUBCLASS
         }
 
-    private fun hasAppleEthernet(configuration: UsbConfiguration): Boolean =
-        (0 until configuration.interfaceCount).map(configuration::getInterface).any {
+    private fun hasAppleEthernet(device: UsbDevice): Boolean =
+        (0 until device.interfaceCount).map(device::getInterface).any {
             it.interfaceClass == APPLE_ETHERNET_CLASS &&
                 it.interfaceSubclass == APPLE_ETHERNET_SUBCLASS &&
                 it.interfaceProtocol == APPLE_ETHERNET_PROTOCOL

@@ -73,10 +73,11 @@ class Iap2LinkEngine(
             writeU16(out, acknowledgementTimeoutMillis)
             out.write(maxRetransmissions)
             out.write(maxAcknowledgements)
-            sessions.forEach {
-                out.write(it.id)
-                out.write(it.kind)
-                out.write(it.version)
+            // 精简移植：Iterable#forEach 为 API 24 默认方法，改用 for 循环
+            for (session in sessions) {
+                out.write(session.id)
+                out.write(session.kind)
+                out.write(session.version)
             }
             return out.toByteArray()
         }

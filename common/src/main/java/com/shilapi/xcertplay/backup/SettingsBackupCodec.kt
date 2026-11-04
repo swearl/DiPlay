@@ -194,7 +194,8 @@ object SettingsBackupCodec {
     }
 
     private fun jsonValue(value: Any): Any = when (value) {
-        is Set<*> -> JSONArray().apply { value.forEach { put(it.toString()) } }
+        // API 19 无 Iterable#forEach 默认方法，改为 for-in 循环
+        is Set<*> -> JSONArray().apply { for (element in value) put(element.toString()) }
         is Float -> value.toDouble()
         else -> value
     }

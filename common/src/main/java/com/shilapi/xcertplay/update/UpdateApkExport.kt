@@ -24,7 +24,8 @@ internal object UpdateApkExport {
     private fun copyToDirectory(directory: File, apk: File): File {
         if (!directory.isDirectory && !directory.mkdirs()) throw IOException("Update storage is unavailable")
         // Keep only the newest APK so a long-lived head unit does not collect old releases.
-        directory.listFiles()?.filter { it.isFile && it.name != apk.name }?.forEach { it.delete() }
+        directory.listFiles()?.filter { it.isFile && it.name != apk.name }
+            ?.let { files -> for (file in files) file.delete() } // API 19 无 Iterable#forEach 默认方法
         return apk.copyTo(File(directory, apk.name), overwrite = true)
     }
 }

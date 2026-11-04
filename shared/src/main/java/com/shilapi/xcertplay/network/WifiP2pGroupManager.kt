@@ -1,4 +1,4 @@
-package com.shilapi.xcertplay.network
+﻿package com.shilapi.xcertplay.network
 
 import android.Manifest
 import android.app.AppOpsManager
@@ -45,7 +45,7 @@ class WifiP2pGroupManager(
         require(WifiP2pChannels.isValid(preferredChannel)) { "Unsupported Wi-Fi Direct channel: $preferredChannel" }
     }
     private val appContext = context.applicationContext
-    private val p2pManager = appContext.getSystemService(WifiP2pManager::class.java)
+    private val p2pManager = (appContext.getSystemService(Context.WIFI_P2P_SERVICE) as? WifiP2pManager)
         ?: throw IllegalStateException("WifiP2pManager is unavailable")
     private val stateLock = Object()
     // The legacy channel API changes shared supplicant state, rather than this Channel object.
@@ -522,7 +522,9 @@ class WifiP2pGroupManager(
             val passphrase = group.passphrase?.takeIf { it.isNotBlank() }
                 ?: credentials?.passphrase
             val interfaceName = group.getInterface()?.takeIf { it.isNotBlank() }
-            val frequencyMHz = group.frequency
+            // 精简移植：WifiP2pGroup.getFrequency 为 API 28+，目标平台不可用；该非 legacy 分支
+            // 在 legacyChannels=true 时不可达，用 0 占位（频率未知，通道号取 null）。
+            val frequencyMHz = 0
             val channelNumber = wifiFrequencyMhzToChannel(frequencyMHz)
             if (
                 networkName == null || passphrase == null ||
@@ -725,17 +727,17 @@ class WifiP2pGroupManager(
 
     @Suppress("DEPRECATION")
     private fun readStation(): Station = runCatching {
-        val info = appContext.getSystemService(WifiManager::class.java)?.connectionInfo
+        val info = (appContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager)?.connectionInfo
         Station(info?.supplicantState, info?.frequency?.takeIf { it > 0 })
     }.getOrDefault(Station(null, null))
 
     /** Returns false only when Wi-Fi is on and reports no 5 GHz band; it also reads false while Wi-Fi is off. */
     private fun checkPrerequisites(station: Station): Boolean {
-        val wifi = appContext.getSystemService(WifiManager::class.java)
+        val wifi = (appContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager)
         val fiveGhzSupported = runCatching { wifi?.is5GHzBandSupported }.getOrNull()
         val wifiEnabled = runCatching { wifi?.isWifiEnabled }.getOrNull()
         val locationEnabled = runCatching {
-            appContext.getSystemService(LocationManager::class.java)?.isLocationEnabledCompat()
+            (appContext.getSystemService(Context.LOCATION_SERVICE) as? LocationManager)?.isLocationEnabledCompat()
         }.getOrNull()
         // 精简移植：目标平台 API 19 只需要精确定位权限（无 NEARBY_WIFI_DEVICES）。
         val required = Manifest.permission.ACCESS_FINE_LOCATION

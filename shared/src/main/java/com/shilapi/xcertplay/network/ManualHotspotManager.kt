@@ -1,8 +1,7 @@
-package com.shilapi.xcertplay.network
+﻿package com.shilapi.xcertplay.network
 
 import android.annotation.SuppressLint
 import android.content.Context
-import android.net.wifi.SoftApConfiguration
 import android.net.wifi.WifiConfiguration
 import android.net.wifi.WifiManager
 import android.os.Build
@@ -41,7 +40,7 @@ class ManualHotspotManager(
     private val waitLock = Object()
     private var confirmed: HotspotSelection? = null
     private var lastSampleLog = emptyList<String>()
-    private val wifiManager = appContext.getSystemService(WifiManager::class.java)
+    private val wifiManager = (appContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager)
         ?: throw IllegalStateException("WifiManager is unavailable")
     private val expectedSsid = ssid
     private val passphrase = passphrase
@@ -96,7 +95,7 @@ class ManualHotspotManager(
                     val messages = mutableListOf<String>()
                     selectHotspotInterface(snapshot, messages::add)
                     if (messages != lastSampleLog) {
-                        messages.forEach(onDiagnostic)
+                        for (message in messages) onDiagnostic(message)
                         lastSampleLog = messages
                     }
                 }
@@ -255,42 +254,10 @@ class ManualHotspotManager(
         }?.frequency
     }
 
+    // 精简移植：SoftApConfiguration 为 API 30+，目标平台不可用；强制走
+    // WifiConfiguration（API 19 可用）的经典读取路径。
     @SuppressLint("PrivateApi")
-    private fun readApConfiguration(): ManualApConfiguration? =
-        readSoftApConfiguration() ?: readLegacyApConfiguration()
-
-    @SuppressLint("PrivateApi")
-    private fun readSoftApConfiguration(): ManualApConfiguration? {
-        // 精简移植：删除版本判断，SoftApConfiguration 仅在新平台存在，旧平台由反射失败后自然降级
-        return try {
-            val method = WifiManager::class.java.getMethod("getSoftApConfiguration")
-            val configuration = method.invoke(wifiManager) as? SoftApConfiguration
-                ?: return null
-            val ssid = configuration.ssid ?: return null
-            val bandAndChannel = run {
-                val band = (
-                    SoftApConfiguration::class.java
-                        .getMethod("getBand")
-                        .invoke(configuration) as? Number
-                    )?.toInt()
-                val channel = SoftApConfiguration::class.java
-                    .getMethod("getChannel")
-                    .invoke(configuration) as? Number
-                if (band == null || channel == null) null else band to channel.toInt()
-            }
-            val band = bandAndChannel?.first
-            val channel = bandAndChannel?.second ?: 0
-            ManualApConfiguration(
-                ssid = ssid,
-                band = band,
-                channel = channel,
-                frequencyMHz = wifiChannelToFrequencyMhz(channel, band),
-                security = mapSoftApSecurity(configuration.securityType),
-            )
-        } catch (_: Throwable) {
-            null
-        }
-    }
+    private fun readApConfiguration(): ManualApConfiguration? = readLegacyApConfiguration()
 
     @SuppressLint("PrivateApi")
     private fun readLegacyApConfiguration(): ManualApConfiguration? {
@@ -319,15 +286,6 @@ class ManualHotspotManager(
         } catch (_: Throwable) {
             null
         }
-    }
-
-    private fun mapSoftApSecurity(securityType: Int): Iap2WirelessSecurity = when (securityType) {
-        SoftApConfiguration.SECURITY_TYPE_OPEN -> Iap2WirelessSecurity.NONE
-        SoftApConfiguration.SECURITY_TYPE_WPA2_PSK -> Iap2WirelessSecurity.WPA_WPA2
-        SoftApConfiguration.SECURITY_TYPE_WPA3_SAE_TRANSITION ->
-            Iap2WirelessSecurity.WPA3_TRANSITION
-        SoftApConfiguration.SECURITY_TYPE_WPA3_SAE -> Iap2WirelessSecurity.WPA3_ONLY
-        else -> Iap2WirelessSecurity.WPA_WPA2
     }
 
     private fun mapWifiConfigurationSecurity(

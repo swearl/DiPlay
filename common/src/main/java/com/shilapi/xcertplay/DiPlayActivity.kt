@@ -18,10 +18,11 @@ import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.graphics.BitmapFactory
 import android.graphics.Color
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffColorFilter
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
-import android.graphics.drawable.RippleDrawable
 import android.media.AudioFormat
 import android.media.AudioTrack
 import android.media.MediaFormat
@@ -754,7 +755,7 @@ class DiPlayActivity : Activity(), AppAppearanceOwner {
             }
             val searchButton = if (iconOnlySearch) {
                 iconButton(R.drawable.ic_dp_search, getString(R.string.settings_search), openSearch).apply {
-                    imageTintList = ColorStateList.valueOf(TEXT)
+                    tintIcon(TEXT)
                 }
             } else {
                 headerButton(getString(R.string.settings_search_hint), R.drawable.ic_dp_search, compact, openSearch)
@@ -790,12 +791,12 @@ class DiPlayActivity : Activity(), AppAppearanceOwner {
         val body = column()
         val left = column()
         if (!compact) {
-            left.addView(label(getString(R.string.your_phone_your_drive), 12, ACCENT, true).apply { letterSpacing = .16f })
+            left.addView(label(getString(R.string.your_phone_your_drive), 12, ACCENT, true)) // API 19 无 letterSpacing（API 21），降级移除
             left.addView(label(getString(R.string.a_familiar_drive), if (wide) 42 else 36, TEXT, true).apply { setPadding(0, dp(12), 0, dp(10)) })
             left.addView(label(getString(R.string.your_maps_music_and_conversations_carplay_right_here_on_yo), 19, MUTED))
         }
         val card = card()
-        homeCardTitle = label(getString(R.string.wireless_carplay), 12, ACCENT, true).apply { letterSpacing = .12f }
+        homeCardTitle = label(getString(R.string.wireless_carplay), 12, ACCENT, true) // API 19 无 letterSpacing（API 21），降级移除
         card.addView(homeCardTitle)
         status = label(getString(R.string.ready_when_you_are), 24, TEXT, true).apply { setPadding(0, dp(10), 0, dp(16)) }
         card.addView(status)
@@ -858,7 +859,7 @@ class DiPlayActivity : Activity(), AppAppearanceOwner {
         right.addView(homeButton(getString(R.string.settings), false) { page = "settings"; render() }, matchButton(height = if (compact) 54 else 68))
         if (!compact) right.addView(label(getString(R.string.make_diplay_feel_right_for_your_car), 14, MUTED).apply { gravity = Gravity.CENTER; setPadding(0, dp(10), 0, dp(24)) })
         else right.addView(space(12))
-        right.addView(label(getString(R.string.home_public_preview, version()), 12, MUTED).apply { letterSpacing = .08f })
+        right.addView(label(getString(R.string.home_public_preview, version()), 12, MUTED)) // API 19 无 letterSpacing（API 21），降级移除
         availableUpdate?.let { release ->
             val message = getString(R.string.update_available_home)
             val tint = { alpha: Int -> (WARNING and 0x00FFFFFF) or (alpha shl 24) }
@@ -874,12 +875,7 @@ class DiPlayActivity : Activity(), AppAppearanceOwner {
                 isClickable = true
                 isFocusable = true
                 contentDescription = message
-                background = RippleDrawable(
-                    ColorStateList.valueOf(RIPPLE),
-                    chip,
-                    GradientDrawable().apply { setColor(Color.WHITE); cornerRadius = dp(16).toFloat() },
-                )
-                foreground = focusRing(radiusDp = 16)
+                background = pressableBackground(chip, focusRadiusDp = 16)
                 setOnClickListener { openAvailableUpdate(release) }
             }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
         }
@@ -948,7 +944,8 @@ class DiPlayActivity : Activity(), AppAppearanceOwner {
     private fun settingsRail(): LinearLayout = column().apply {
         background = rounded(SURFACE, BORDER)
         setPadding(dp(12), dp(12), dp(12), dp(12))
-        SettingsCategory.entries.forEach { category ->
+        // API 19 无 Iterable#forEach 默认方法，改为 for-in 循环
+        for (category in SettingsCategory.entries) {
             addView(settingsRailDestination(category), matchButton(0, 52).apply {
                 bottomMargin = if (category == SettingsCategory.entries.last()) 0 else dp(8)
             })
@@ -963,16 +960,14 @@ class DiPlayActivity : Activity(), AppAppearanceOwner {
             isClickable = true
             isFocusable = true
             isSelected = selected
-            foreground = focusRing(12)
             contentDescription = getString(R.string.settings_open_category, title)
-            background = android.graphics.drawable.RippleDrawable(
-                ColorStateList.valueOf(RIPPLE),
+            background = pressableBackground(
                 GradientDrawable().apply {
                     setColor(if (selected) RAIL_SELECTED else Color.TRANSPARENT)
                     cornerRadius = dp(12).toFloat()
                     if (selected) setStroke(dp(1), RAIL_SELECTED_BORDER)
                 },
-                null,
+                focusRadiusDp = 12,
             )
             setPadding(dp(8), 0, dp(12), 0)
             addView(View(this@DiPlayActivity).apply {
@@ -984,7 +979,7 @@ class DiPlayActivity : Activity(), AppAppearanceOwner {
             }, LinearLayout.LayoutParams(dp(4), dp(34)).apply { marginEnd = dp(10) })
             addView(ImageView(this@DiPlayActivity).apply {
                 setImageResource(settingsCategoryIcon(category))
-                imageTintList = ColorStateList.valueOf(if (selected) ACCENT else TEXT)
+                tintIcon(if (selected) ACCENT else TEXT)
                 importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             }, LinearLayout.LayoutParams(dp(26), dp(26)).apply { marginEnd = dp(12) })
             addView(label(title, 16, if (selected) ACCENT else TEXT, true,
@@ -1074,7 +1069,8 @@ class DiPlayActivity : Activity(), AppAppearanceOwner {
             val columns = row().apply { gravity = Gravity.TOP }
             val setup = column()
             setup.addView(settingsSectionHeading(R.string.settings_your_setup))
-            destinations.forEach { item ->
+            // API 19 无 Iterable#forEach 默认方法，改为 for-in 循环
+            for (item in destinations) {
                 setup.addView(settingsSummaryCard(item.first, getString(item.second)),
                     LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = categoryGap })
             }
@@ -1087,7 +1083,7 @@ class DiPlayActivity : Activity(), AppAppearanceOwner {
             content.addView(columns, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(SETTINGS_BLOCK_GAP_DP) })
         } else {
             content.addView(settingsSectionHeading(R.string.settings_your_setup))
-            destinations.forEach { item ->
+            for (item in destinations) {
                 content.addView(settingsSummaryCard(item.first, getString(item.second)),
                     LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = categoryGap })
             }
@@ -1183,15 +1179,17 @@ class DiPlayActivity : Activity(), AppAppearanceOwner {
         setPadding(dp(24), dp(10), dp(24), dp(10))
         isClickable = true
         isFocusable = true
-        foreground = android.graphics.drawable.LayerDrawable(arrayOf(
-            android.graphics.drawable.RippleDrawable(ColorStateList.valueOf(RIPPLE), null, null),
-            focusRing((layoutCornerRadius() * 1.35f / resources.displayMetrics.density).roundToInt())))
+        // API 19 无 View.foreground（API 23）：卡片背景改为带按压/焦点态的状态列表
+        background = pressableBackground(
+            rounded(SURFACE, BORDER),
+            focusRadiusDp = (layoutCornerRadius() * 1.35f / resources.displayMetrics.density).roundToInt(),
+        )
         contentDescription = getString(R.string.settings_open_category, settingsCategoryTitle(category))
         addView(row().apply {
             gravity = Gravity.CENTER_VERTICAL
             addView(ImageView(this@DiPlayActivity).apply {
                 setImageResource(settingsCategoryIcon(category))
-                imageTintList = ColorStateList.valueOf(if (warning) WARNING else ACCENT)
+                tintIcon(if (warning) WARNING else ACCENT)
                 importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             }, LinearLayout.LayoutParams(dp(24), dp(24)).apply { marginEnd = dp(20) })
             addView(column().apply {
@@ -1277,7 +1275,7 @@ class DiPlayActivity : Activity(), AppAppearanceOwner {
                 val titles = mutableListOf(settingsCategoryTitle(category))
                 searchIndexSink = titles
                 settingsCategoryContent(column())
-                titles.forEach { index.putIfAbsent(it, category) }
+                for (title in titles) index.putIfAbsent(title, category)
             }
         } finally {
             searchIndexSink = null
@@ -1338,14 +1336,24 @@ class DiPlayActivity : Activity(), AppAppearanceOwner {
         // draws the background unscrolled. The icon and focus ring live there, so they stay put
         // without compensating for scroll or for the text's vertical centring.
         val iconSize = headerIconSize(compact)
-        val icon = getDrawable(R.drawable.ic_dp_search)?.mutate()?.apply { setTint(MUTED) }
+        // API 19 无 setLayerGravity/setLayerSize/setLayerInsetRelative（API 23）：
+        // 图标层用绝对 inset 定位，布局完成后按视图尺寸垂直居中
+        @Suppress("DEPRECATION")
+        val icon = resources.getDrawable(R.drawable.ic_dp_search)?.mutate()?.apply {
+            colorFilter = PorterDuffColorFilter(MUTED, PorterDuff.Mode.SRC_ATOP)
+            setBounds(0, 0, iconSize, iconSize)
+        }
         background = android.graphics.drawable.LayerDrawable(
-            listOfNotNull(buttonShape(BUTTON, BORDER), icon, buttonFocusRing()).toTypedArray(),
+            listOfNotNull(buttonShape(BUTTON, BORDER), icon, focusShape(buttonFocusRadiusDp())).toTypedArray(),
         ).apply {
-            if (icon != null) {
-                setLayerGravity(1, Gravity.START or Gravity.CENTER_VERTICAL)
-                setLayerSize(1, iconSize, iconSize)
-                setLayerInsetRelative(1, dp(16), 0, 0, 0)
+            if (icon != null) setLayerInset(1, dp(16), 0, 0, 0)
+        }
+        doOnLayout {
+            (background as? android.graphics.drawable.LayerDrawable)?.let { layers ->
+                if (icon != null) {
+                    val top = (height - iconSize) / 2
+                    layers.setLayerInset(1, dp(16), top, width - dp(16) - iconSize, top)
+                }
             }
         }
         gravity = Gravity.CENTER_VERTICAL or Gravity.START
@@ -1443,7 +1451,7 @@ class DiPlayActivity : Activity(), AppAppearanceOwner {
                 setPadding(dp(12), dp(12), dp(12), dp(12))
             })
         }
-        results.forEach { list.addView(settingsSearchRow(it)) }
+        for (result in results) list.addView(settingsSearchRow(result))
         val existing = settingsSearchPopup?.takeIf { it.isShowing }
         val scroll = (existing?.contentView as? ScrollView) ?: ScrollView(this)
         scroll.removeAllViews()
@@ -1454,7 +1462,7 @@ class DiPlayActivity : Activity(), AppAppearanceOwner {
         }
         settingsSearchPopup = PopupWindow(scroll, box.width, 0, false).apply {
             setBackgroundDrawable(rounded(SURFACE, BORDER))
-            elevation = dp(8).toFloat()
+            // API 19 无 PopupWindow.setElevation（API 21），悬浮层级降级
             // Tapping elsewhere closes the list and keeps the query; tapping the box reopens it.
             isOutsideTouchable = true
             inputMethodMode = PopupWindow.INPUT_METHOD_NEEDED
@@ -1505,8 +1513,15 @@ class DiPlayActivity : Activity(), AppAppearanceOwner {
         isClickable = true
         isFocusable = true
         contentDescription = "${result.title}, $category"
-        foreground = android.graphics.drawable.LayerDrawable(arrayOf(
-            android.graphics.drawable.RippleDrawable(ColorStateList.valueOf(RIPPLE), null, null), focusRing(12)))
+        // API 19 无 View.foreground：按压/焦点态改入背景状态列表
+        background = android.graphics.drawable.StateListDrawable().apply {
+            addState(intArrayOf(android.R.attr.state_pressed), GradientDrawable().apply {
+                setColor(com.shilapi.xcertplay.compat.ColorBlend.blendARGB(Color.TRANSPARENT, RIPPLE, 0.25f))
+                cornerRadius = dp(12).toFloat()
+            })
+            addState(intArrayOf(android.R.attr.state_focused), focusShape(12))
+            addState(intArrayOf(), GradientDrawable().apply { setColor(Color.TRANSPARENT) })
+        }
         minimumHeight = dp(56)
         gravity = Gravity.CENTER_VERTICAL
         setPadding(dp(12), dp(8), dp(12), dp(8))
@@ -2977,7 +2992,7 @@ class DiPlayActivity : Activity(), AppAppearanceOwner {
     private fun setupGuide(content: LinearLayout) {
         val step = setupStep.coerceIn(SetupGuide.STEP_CAR, SetupGuide.STEP_DONE)
         content.addView(label(getString(R.string.setup_step_of, step + 1, SetupGuide.STEP_COUNT), 13, ACCENT, true)
-            .apply { letterSpacing = .12f })
+            ) // API 19 无 letterSpacing（API 21），降级移除
         val progress = row().apply { setPadding(0, dp(10), 0, dp(20)) }
         repeat(SetupGuide.STEP_COUNT) { index ->
             progress.addView(View(this).apply {
@@ -3511,11 +3526,12 @@ class DiPlayActivity : Activity(), AppAppearanceOwner {
             if (ClusterMusicSettings.permanent(this)) 1 else 0, reconnects = false) {
             ClusterMusicSettings.savePermanent(this, it == 1)
         }
-        listOf(
+        // API 19 无 Iterable#forEach 默认方法，改为 for-in 解构
+        for ((key, title, value) in listOf(
             Triple("x", R.string.settings_cluster_music_horizontal, ClusterMusicSettings.x(this)),
             Triple("y", R.string.settings_cluster_music_vertical, ClusterMusicSettings.y(this)),
             Triple("size", R.string.settings_cluster_music_size, ClusterMusicSettings.size(this)),
-        ).forEach { (key, title, value) ->
+        )) {
             card.addView(overlaySliderRow(getString(title),
                 (if (key == "size") 50..300 else 5..95).toList(), value) { "$it%" }.also {
                 it.onSave = { percent -> ClusterMusicSettings.save(this, key, percent) }
@@ -3756,7 +3772,8 @@ class DiPlayActivity : Activity(), AppAppearanceOwner {
             openOverlayPermission()
         }, matchButton(10, 56))
 
-        UsbPermissionSetup.snapshot(this).forEach { (permission, granted) ->
+        // API 19 无 Map#forEach 默认方法，改为 for-in 解构
+        for ((permission, granted) in UsbPermissionSetup.snapshot(this)) {
             val title = getString(when (permission) {
                 UsbPermissionSetup.Permission.ACCESSIBILITY -> R.string.usb_auto_confirm_title
                 UsbPermissionSetup.Permission.USAGE -> R.string.center_map_auto_hide
@@ -4191,12 +4208,10 @@ class DiPlayActivity : Activity(), AppAppearanceOwner {
 
     private fun onLocationReportingChanged(enabled: Boolean) {
         if (enabled && !hasPreciseLocation()) {
-            // Keep the switch off until precise location is actually granted.
+            // targetSdk 19 无运行时权限（API 23 才有 requestPermissions）：权限安装时即授予，
+            // 仍缺失说明被系统策略关闭，直接给出说明页。
             render()
-            requestPermissions(arrayOf(
-                Manifest.permission.ACCESS_FINE_LOCATION,
-                Manifest.permission.ACCESS_COARSE_LOCATION,
-            ), RC_LOCATION)
+            permissionHelp(getString(R.string.location), getString(R.string.allow_precise_location_for_diplay_in_the_head_unit_s_app_p))
             return
         }
         applyLocationReporting(enabled)
@@ -4783,11 +4798,9 @@ class DiPlayActivity : Activity(), AppAppearanceOwner {
 
     private fun saveReportToDownloads() {
         if (exportInProgress) return
-        if (DiagnosticExportStore.needsStoragePermission(this)) {
-            runCatching {
-                requestPermissions(arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE), RC_REPORT_STORAGE)
-            }.onFailure { exportDiagnostics() }
-        } else exportDiagnostics()
+        // targetSdk 19 存储权限安装时即授予；仍缺失说明被系统策略关闭，
+        // 直接尝试导出，由写入失败的错误处理兜底（API 19 无运行时申请）。
+        exportDiagnostics()
     }
 
     private fun chooseReportDestination() {
@@ -4898,7 +4911,8 @@ class DiPlayActivity : Activity(), AppAppearanceOwner {
             "bydHeadUnit=${runCatching { CarHotspotSetup.isBydHeadUnit(appContext) }.getOrNull()} " +
             "hotspotOn=${runCatching { com.shilapi.xcertplay.network.CarHotspotStatus.isEnabled(appContext) }.getOrNull()}")
         appendLine(WheelKeyService.report(appContext))
-        WheelKeyLog.report(WheelKeyService.connected()).forEach { appendLine(it) }
+        // API 19 无 Iterable#forEach 默认方法，改为 for-in 循环
+        for (line in WheelKeyLog.report(WheelKeyService.connected())) appendLine(line)
         appendLine()
         appendLine(UpdateAvailability.report(appContext, System.currentTimeMillis()))
         appendLine()
@@ -5010,46 +5024,44 @@ class DiPlayActivity : Activity(), AppAppearanceOwner {
         val target = channelButtons.getOrNull(index) ?: return
         target.isSelected = selected
         target.setTextColor(if (selected) ON_ACCENT else TEXT)
-        target.background = android.graphics.drawable.RippleDrawable(
-            ColorStateList.valueOf(RIPPLE),
+        target.background = pressableBackground(
             buttonShape(if (selected) ACCENT else SURFACE, if (selected) ACCENT else BORDER, target.height),
-            null
         )
     }
 
     private fun channelSelector(): ViewGroup {
         channelButtons.clear()
-        val grid = GridLayout(this).apply {
-            columnCount = 7
-            rowCount = 3
-            setPadding(0, dp(8), 0, dp(8))
-        }
-        for (i in 0..20) {
-            val btn = Button(this).apply {
-                text = i.toString()
-                isAllCaps = false
-                textSize = 16f
-                minHeight = dp(48)
-                stateListAnimator = null
-                setOnClickListener {
-                    val previous = navigationStreamType
-                    navigationStreamType = i
-                    if (previous != i) {
-                        paintChannel(previous, false)
-                        paintChannel(i, true)
+        // API 19 的 GridLayout.spec 无 weight 重载（API 21），改用每行 LinearLayout 等分权重
+        val grid = android.widget.LinearLayout(this).apply { orientation = android.widget.LinearLayout.VERTICAL }
+        for (rowIndex in 0..2) {
+            val rowLayout = android.widget.LinearLayout(this).apply {
+                orientation = android.widget.LinearLayout.HORIZONTAL
+                setPadding(0, dp(4), 0, dp(4))
+            }
+            for (colIndex in 0..6) {
+                val i = rowIndex * 7 + colIndex
+                val btn = Button(this).apply {
+                    text = i.toString()
+                    isAllCaps = false
+                    textSize = 16f
+                    minHeight = dp(48)
+                    setOnClickListener {
+                        val previous = navigationStreamType
+                        navigationStreamType = i
+                        if (previous != i) {
+                            paintChannel(previous, false)
+                            paintChannel(i, true)
+                        }
+                        playTestTone(i)
                     }
-                    playTestTone(i)
                 }
+                rowLayout.addView(btn, android.widget.LinearLayout.LayoutParams(0, dp(48), 1f).apply {
+                    setMargins(dp(4), 0, dp(4), 0)
+                })
+                channelButtons.add(btn)
+                paintChannel(i, i == navigationStreamType)
             }
-            val params = GridLayout.LayoutParams().apply {
-                width = 0
-                height = dp(48)
-                columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
-                setMargins(dp(4), dp(4), dp(4), dp(4))
-            }
-            grid.addView(btn, params)
-            channelButtons.add(btn)
-            paintChannel(i, i == navigationStreamType)
+            grid.addView(rowLayout)
         }
         return grid
     }
@@ -5070,7 +5082,7 @@ class DiPlayActivity : Activity(), AppAppearanceOwner {
         val card = card()
         val heading = row().apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, 0, 0, dp(16)) }
         if (icon != null) heading.addView(ImageView(this).apply {
-            setImageResource(icon); imageTintList = ColorStateList.valueOf(ACCENT)
+            setImageResource(icon); tintIcon(ACCENT)
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         }, LinearLayout.LayoutParams(dp(28), dp(28)).apply { marginEnd = dp(12) })
         heading.addView(label(title, 22, TEXT, true,
@@ -5283,8 +5295,10 @@ class DiPlayActivity : Activity(), AppAppearanceOwner {
         setSingleLine(true)
         gravity = Gravity.CENTER
         val iconSize = headerIconSize(compact)
-        val drawable = getDrawable(icon)?.mutate()?.apply {
-            setTint(TEXT)
+        @Suppress("DEPRECATION")
+        val drawable = resources.getDrawable(icon)?.mutate()?.apply {
+            // API 19 无 Drawable.setTint（API 21），用 ColorFilter 着色
+            colorFilter = PorterDuffColorFilter(TEXT, PorterDuff.Mode.SRC_ATOP)
             setBounds(0, 0, iconSize, iconSize)
         }
         setCompoundDrawablesRelative(drawable, null, null, null)
@@ -5312,42 +5326,40 @@ class DiPlayActivity : Activity(), AppAppearanceOwner {
         cornerRadius = if (heightPx > 0) minOf(dp(24).toFloat(), heightPx * 20f / 56) else layoutCornerRadius()
     }
 
-    private fun buttonFocusRing() = focusRing(
-        (layoutCornerRadius() / resources.displayMetrics.density).roundToInt(),
-    )
+    // 按钮焦点描边的圆角半径（跟随按钮高度与布局圆角），供按压背景状态列表使用
+    private fun buttonFocusRadiusDp(heightPx: Int = 0): Int {
+        val radiusPx = if (heightPx > 0) minOf(dp(24).toFloat(), heightPx * 20f / 56) else layoutCornerRadius()
+        return (radiusPx / resources.displayMetrics.density).roundToInt()
+    }
 
     private fun button(title: String, primary: Boolean, click: () -> Unit) = SettingButton(this, MUTED, ACCENT).apply {
         isAllCaps = false; textSize = 18f; setTextColor(if (primary) ON_ACCENT else TEXT)
         typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-        background = android.graphics.drawable.RippleDrawable(ColorStateList.valueOf(RIPPLE), buttonShape(if (primary) ACCENT else BUTTON, if (primary) ACCENT else BORDER), null)
-        setPadding(dp(16), 0, dp(16), 0); minHeight = dp(56); stateListAnimator = null
+        // API 19 无 RippleDrawable/foreground/stateListAnimator：按压与焦点态合入背景状态列表
+        background = pressableBackground(
+            buttonShape(if (primary) ACCENT else BUTTON, if (primary) ACCENT else BORDER),
+            focusRadiusDp = buttonFocusRadiusDp(),
+        )
+        setPadding(dp(16), 0, dp(16), 0); minHeight = dp(56)
         compoundDrawablePadding = dp(12)
-        foreground = buttonFocusRing()
         text = title
         searchIndexSink?.add(title.substringBefore(VALUE_SEPARATOR))
         setOnClickListener { click() }
         doOnLayout {
             val shape = buttonShape(if (primary) ACCENT else BUTTON, if (primary) ACCENT else BORDER, height)
-            background = android.graphics.drawable.RippleDrawable(ColorStateList.valueOf(RIPPLE), shape, null)
-            foreground = focusRing((shape.cornerRadius / resources.displayMetrics.density).roundToInt())
+            background = pressableBackground(shape, focusRadiusDp = buttonFocusRadiusDp(height))
         }
     }
 
     private fun iconButton(icon: Int, description: String, click: () -> Unit) = ImageButton(this).apply {
         setImageResource(icon)
-        imageTintList = ColorStateList.valueOf(ACCENT)
+        tintIcon(ACCENT)
         contentDescription = description
         scaleType = ImageView.ScaleType.CENTER
         setPadding(dp(12), dp(12), dp(12), dp(12))
         minimumWidth = dp(48)
         minimumHeight = dp(48)
-        stateListAnimator = null
-        background = android.graphics.drawable.RippleDrawable(
-            ColorStateList.valueOf(RIPPLE),
-            buttonShape(BUTTON, BORDER),
-            null,
-        )
-        foreground = buttonFocusRing()
+        background = pressableBackground(buttonShape(BUTTON, BORDER), focusRadiusDp = buttonFocusRadiusDp())
         setOnClickListener { click() }
     }
 
@@ -5386,7 +5398,8 @@ class DiPlayActivity : Activity(), AppAppearanceOwner {
                     offset = contentCentre - textCentre
                 }
                 // The chevron is already centred by TextView; compensate for the text shift.
-                compoundDrawablesRelative.filterNotNull().forEach { drawable ->
+                // API 19 无 Iterable#forEach 默认方法，改为 for-in 循环
+                for (drawable in compoundDrawablesRelative.filterNotNull()) {
                     val bounds = drawable.bounds
                     val top = -offset.roundToInt()
                     drawable.setBounds(bounds.left, top, bounds.right, top + bounds.height())
@@ -5412,15 +5425,26 @@ class DiPlayActivity : Activity(), AppAppearanceOwner {
             }
             super.setText(styled, BufferType.SPANNABLE)
             gravity = Gravity.CENTER_VERTICAL or Gravity.START
+            @Suppress("DEPRECATION")
             setCompoundDrawablesRelativeWithIntrinsicBounds(null, null,
-                context.getDrawable(R.drawable.ic_dp_chevron)?.mutate()?.apply { setTint(accent) }, null)
+                resources.getDrawable(R.drawable.ic_dp_chevron)?.mutate()?.apply {
+                    colorFilter = PorterDuffColorFilter(accent, PorterDuff.Mode.SRC_ATOP)
+                }, null)
         }
     }
     // Remote and D-pad users need to see where they are; touch mode never shows it.
-    private fun focusRing(radiusDp: Int = 20) = android.graphics.drawable.StateListDrawable().apply {
-        addState(intArrayOf(android.R.attr.state_focused), GradientDrawable().apply {
-            setColor(Color.TRANSPARENT); cornerRadius = dp(radiusDp).toFloat(); setStroke(dp(3), FOCUS_RING)
-        })
+    private fun focusShape(radiusDp: Int) = GradientDrawable().apply {
+        setColor(Color.TRANSPARENT); cornerRadius = dp(radiusDp).toFloat(); setStroke(dp(3), FOCUS_RING)
+    }
+
+    // API 19 无 RippleDrawable（API 21）/View.foreground（API 23）：
+    // 用背景 StateListDrawable 同时承载按压变色与焦点描边（视觉降级：无涟漪动画）。
+    private fun pressableBackground(shape: GradientDrawable, focusRadiusDp: Int? = null): android.graphics.drawable.Drawable =
+        com.shilapi.xcertplay.compat.CompatUi.pressable(shape, RIPPLE, focusRadiusDp?.let { focusShape(it) })
+
+    // API 19 无 setImageTintList（API 21）：静态图标用 ColorFilter 着色
+    private fun ImageView.tintIcon(color: Int) {
+        drawable?.mutate()?.colorFilter = PorterDuffColorFilter(color, PorterDuff.Mode.SRC_ATOP)
     }
 
     private fun rounded(color: Int, stroke: Int) = GradientDrawable().apply { setColor(color); cornerRadius = layoutCornerRadius() * 1.35f; setStroke(dp(1), stroke) }

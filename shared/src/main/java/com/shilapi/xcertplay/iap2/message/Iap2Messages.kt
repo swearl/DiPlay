@@ -71,7 +71,8 @@ object Iap2CarPlayMessages {
         return Iap2Messages.build(Iap2Endpoints.CARPLAY_START_SESSION) {
             if (wiredIpv6Addresses.isNotEmpty() || wiredReserved != null) {
                 group(0) {
-                    wiredIpv6Addresses.forEach { string(0, it) }
+                    // 精简移植：Iterable#forEach 为 API 24 默认方法，改用 for 循环
+                    for (address in wiredIpv6Addresses) string(0, address)
                     optionalU32(1, wiredReserved)
                 }
             }
@@ -80,7 +81,7 @@ object Iap2CarPlayMessages {
                     string(0, it.ssid)
                     string(1, it.passphrase)
                     u8(2, it.channel)
-                    it.ipAddresses.forEach { address -> string(3, address) }
+                    for (address in it.ipAddresses) string(3, address)
                     u8(4, it.securityType)
                 }
             }
@@ -278,10 +279,10 @@ object Iap2ControlMessages {
     fun startNowPlayingUpdates(): Iap2Frame =
         Iap2Messages.build(Iap2Endpoints.START_NOW_PLAYING_UPDATES) {
             group(0) {
-                listOf(1, 4, 6, 12, 26).forEach(::void)
+                for (parameter in listOf(1, 4, 6, 12, 26)) void(parameter)
             }
             group(1) {
-                listOf(0, 1, 7).forEach(::void)
+                for (parameter in listOf(0, 1, 7)) void(parameter)
             }
         }
 

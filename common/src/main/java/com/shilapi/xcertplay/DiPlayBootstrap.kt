@@ -14,9 +14,10 @@ internal object DiPlayBootstrap {
     @Synchronized fun ensure(context: Context, mfiTarget: MfiTarget) {
         if (mfiTarget != MfiTarget.LOCAL) return
         if (ready) return
-        val target = File(context.noBackupFilesDir, LocalMfiAuthenticationClient.DIRECTORY)
+        // API 19 无 noBackupFilesDir（API 21），且 API 19 无自动备份机制，filesDir 行为等价
+        val target = File(context.filesDir, LocalMfiAuthenticationClient.DIRECTORY)
         if (!target.exists()) {
-            val staging = File(context.noBackupFilesDir, "offline-mfi-staging")
+            val staging = File(context.filesDir, "offline-mfi-staging")
             staging.deleteRecursively()
             check(staging.mkdirs()) { "Could not prepare local authentication" }
             staging.setReadable(false, false); staging.setReadable(true, true)

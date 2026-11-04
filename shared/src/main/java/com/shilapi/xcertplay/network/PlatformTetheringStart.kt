@@ -1,4 +1,4 @@
-package com.shilapi.xcertplay.network
+﻿package com.shilapi.xcertplay.network
 
 import android.content.Context
 import android.net.ConnectivityManager
@@ -105,7 +105,7 @@ internal object PlatformTetheringStart {
 
     private fun connectivityService(context: Context, failures: MutableList<String>): Any? {
         // ServiceManager is only the way around a field that cannot be read; an empty field means no service.
-        val manager = context.getSystemService(ConnectivityManager::class.java)
+        val manager = (context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager)
         try {
             val service = ConnectivityManager::class.java.getDeclaredField("mService")
                 .apply { isAccessible = true }.get(manager)

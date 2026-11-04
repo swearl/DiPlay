@@ -256,10 +256,9 @@ class CarPlayMediaEngine(
             microphoneStart.scheduleSilentStart(microphoneScheduler, MicrophoneStart.SILENT_START_MILLIS) { startNow ->
                 // Atomic with TEARDOWN, which removes the pending entry before it stops the microphone.
                 var started = false
-                pendingMicrophone.computeIfPresent(streamKey) { _, pending ->
-                    if (pending === microphone) started = startNow()
-                    pending
-                }
+                // 精简移植：computeIfPresent 为 API 24+，先 get 再按引用判断；条目移除仍由 TEARDOWN 负责
+                val pending = pendingMicrophone[streamKey]
+                if (pending === microphone) started = startNow()
                 if (started) {
                     session.logDebug(
                         "Audio: microphone started without downlink audio type=$type audioType=$audioType " +
@@ -563,7 +562,8 @@ class CarPlayMediaEngine(
         sessionStreams.forEach { streams.remove(it)?.close() }
         audioMeta.clear()
         pendingMicrophone.clear()
-        audioCaptures.values.forEach(AudioPacketCapture::close)
+        // 精简移植：Iterable.forEach 为 API 24+，改用 for 循环
+        for (capture in audioCaptures.values) capture.close()
         audioCaptures.clear()
     }
 

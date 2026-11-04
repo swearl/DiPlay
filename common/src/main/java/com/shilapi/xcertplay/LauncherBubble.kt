@@ -70,7 +70,9 @@ internal object LauncherBubble {
         appContext = context.applicationContext
     }
 
-    fun permitted(context: Context): Boolean = Settings.canDrawOverlays(context)
+    // API 19 无 Settings.canDrawOverlays（API 23）：targetSdk 19 下悬浮窗权限安装时即授予
+    @Suppress("UNUSED_PARAMETER")
+    fun permitted(context: Context): Boolean = true
 
     /** Shows the bubble shortly, because a DiPlay screen is going away. Main thread. */
     fun scheduleShow() {
@@ -94,7 +96,7 @@ internal object LauncherBubble {
         val context = appContext ?: return false
         if (!AirPlayPersistence.loadLauncherBubble(context)) return false
         if (!permitted(context)) return false
-        val windows = context.getSystemService(WindowManager::class.java) ?: return false
+        val windows = context.getSystemService(Context.WINDOW_SERVICE) as? WindowManager ?: return false
         val metrics = context.resources.displayMetrics
         val density = metrics.density
         val sizePercent = AirPlayPersistence.loadLauncherBubbleSize(context)
@@ -266,7 +268,7 @@ internal object LauncherBubble {
     fun hide() {
         val view = root ?: return
         root = null
-        runCatching { view.context.getSystemService(WindowManager::class.java)?.removeViewImmediate(view) }
+        runCatching { (view.context.getSystemService(Context.WINDOW_SERVICE) as? WindowManager)?.removeViewImmediate(view) }
         Log.i(TAG, "bubble hidden")
     }
 

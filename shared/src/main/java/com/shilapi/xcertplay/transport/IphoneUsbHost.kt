@@ -5,7 +5,6 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.hardware.usb.UsbConfiguration
 import android.hardware.usb.UsbConstants
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbDeviceConnection
@@ -202,8 +201,8 @@ class IphoneUsbHost(
     /**
      * Opens LIVI's USBMUX bulk pipe on the re-enumerated iPhone.
      *
-     * This repeats CarPlay configuration selection on the newly opened Android connection and
-     * claims the Apple USB Multiplexor interface, preferring the LIVI bulk pair 0x04/0x85.
+     * This claims the Apple USB Multiplexor interface on the newly opened Android connection,
+     * preferring the LIVI bulk pair 0x04/0x85.（精简移植：API 19 无 configuration 切换逻辑）
      * After a successful callback, it owns the returned session and must close it. If the callback
      * throws, this method closes the session before propagating the callback failure.
      */
@@ -269,22 +268,23 @@ class IphoneUsbHost(
         if (!usbManager.hasPermission(device)) {
             throw IphoneUsbException.PermissionDenied("USB permission has not been granted")
         }
-        var connection = usbManager.openDevice(device)
+        val connection = usbManager.openDevice(device)
             ?: throw IphoneUsbException.DeviceUnavailable("UsbManager could not open the iPhone")
         var claimedInterface: UsbInterface? = null
         try {
             val configuration = IphoneCarPlayConfiguration.find(device)
                 ?: throw IphoneUsbException.Protocol(
-                    "Re-enumerated iPhone exposes no USBMUX CarPlay configuration",
+                    "Re-enumerated iPhone exposes no USBMUX CarPlay interfaces",
                 )
-            connection = selectConfiguration(connection, device, configuration)
+            // 精简移植：API 19 无 configuration 概念，直接在设备顶层 interface 上找 USBMUX 并 claim
             val usbMux = IphoneCarPlayConfiguration.usbMuxInterface(configuration)
-                ?: throw IphoneUsbException.Protocol("CarPlay configuration exposes no USBMUX interface")
+                ?: throw IphoneUsbException.Protocol("CarPlay interfaces expose no USBMUX interface")
             val endpoints = IphoneCarPlayConfiguration.usbMuxEndpoints(usbMux)
                 ?: throw IphoneUsbException.Protocol("USBMUX interface exposes no bulk endpoint pair")
             Log.i(
                 IphoneCarPlayConfiguration.TAG,
-                "usbmux config=${configuration.id} iface=${usbMux.id} alt=${usbMux.alternateSetting} " +
+                // 精简移植：API 19 无 configuration/alternateSetting 概念，日志只保留接口信息
+                "usbmux iface=${usbMux.id} " +
                     "class=${usbMux.interfaceClass}/${usbMux.interfaceSubclass}/${usbMux.interfaceProtocol} " +
                     "endpoints=${usbMux.endpointCount} " +
                     "out=${describeUsbEndpoint(endpoints.first)} " +
@@ -302,60 +302,9 @@ class IphoneUsbHost(
         }
     }
 
-    /**
-     * Selects [configuration], detaching head-unit drivers that block the switch (#518). Returns
-     * the connection to use from now on: the detach replaces [connection] with a new one.
-     */
-    private fun selectConfiguration(
-        connection: UsbDeviceConnection,
-        device: UsbDevice,
-        configuration: UsbConfiguration,
-    ): UsbDeviceConnection {
-        val interfaces = (0 until device.configurationCount).map(device::getConfiguration)
-            .flatMap { config -> (0 until config.interfaceCount).map(config::getInterface) }
-            .associateBy { it.id }
-        var current = connection
-        try {
-            val outcome = UsbConfigurationSelection.select(
-                target = configuration.id,
-                interfaceIds = interfaces.keys.toList(),
-                setConfiguration = { current.setConfiguration(configuration) },
-                activeConfiguration = { activeConfiguration(current) },
-                // A forced claim detaches the kernel driver. It stays claimed until the reopen.
-                detach = { id -> current.claimInterface(interfaces.getValue(id), true) },
-                // Closing drops the claims without the driver reattach that releaseInterface() requests.
-                reopen = {
-                    current.close()
-                    current = usbManager.openDevice(device)
-                        ?: throw IphoneUsbException.DeviceUnavailable("UsbManager could not reopen the iPhone")
-                },
-            ) ?: return current
-            runCatching { onDiagnostic(outcome.diagnostic()) }
-            if (outcome.wrongConfiguration) {
-                throw IphoneUsbException.DeviceUnavailable(
-                    "Android could not switch the iPhone to USB configuration ${configuration.id} " +
-                        "(still ${outcome.after}); a head-unit driver may hold it",
-                )
-            }
-            if (!outcome.selected) {
-                Log.w(IphoneCarPlayConfiguration.TAG, "setConfiguration ${configuration.id} reported failure; claiming anyway")
-            }
-            return current
-        } catch (error: Throwable) {
-            // The caller closes the connection it passed in; a replacement is closed here.
-            if (current !== connection) current.close()
-            throw error
-        }
-    }
-
-    /** The iPhone's current configuration value (standard GET_CONFIGURATION), or null if unreadable. */
-    private fun activeConfiguration(connection: UsbDeviceConnection): Int? {
-        val value = ByteArray(1)
-        val read = connection.controlTransfer(
-            USB_STANDARD_DEVICE_IN, GET_CONFIGURATION_REQUEST, 0, 0, value, value.size, CONTROL_TRANSFER_TIMEOUT_MILLIS,
-        )
-        return if (read == value.size) value[0].toInt() and 0xff else null
-    }
+    // 精简移植：API 19 没有 UsbConfiguration/setConfiguration，"枚举 configuration 并切换"
+    // 的整段逻辑无法实现也不需要（设备顶层 interface 即当前活动配置），故整体删除，
+    // 直接依靠 claimInterface(force=true) 完成接口占用与内核驱动分离。
 
     private fun requireConfiguredDevice(device: UsbDevice) {
         if (!matcher.matches(device.vendorId, device.productId)) {
@@ -404,13 +353,12 @@ class IphoneUsbHost(
         )
         // 精简移植：UsbDevice.getVersion 为 API 23+，目标平台不可用，视为未知
         return usbModeDiagnostic(read, mode, null,
-            (0 until device.configurationCount).map(device::getConfiguration).map { "${it.id}[${IphoneCarPlayConfiguration.describe(it)}]" })
+            // 精简移植：API 19 无 configuration 概念，用顶层 interface 描述代替配置枚举
+            listOf(IphoneCarPlayConfiguration.describe(device)))
     }
 
     companion object {
         private const val USB_VENDOR_DEVICE_IN = 0xc0
-        private const val USB_STANDARD_DEVICE_IN = 0x80
-        private const val GET_CONFIGURATION_REQUEST = 0x08
         private const val GET_USB_MODE_REQUEST = 0x45
         private const val USB_MODE_RESPONSE_LENGTH = 4
         private const val CARPLAY_CONFIGURATION_REQUEST = 0x52

@@ -12,7 +12,6 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
-import java.util.function.Supplier
 import kotlin.system.exitProcess
 
 /**
@@ -193,9 +192,20 @@ object CarHotspotStartMain {
     private fun startWithTetheringManager(): String {
         val connector = service("tethering") ?: return "unsupported"
         val managerType = Class.forName("android.net.TetheringManager")
-        val manager = managerType.getDeclaredConstructor(Context::class.java, Supplier::class.java)
+        // 精简移植：java.util.function.Supplier 为 API 24+，改为反射加载接口并用动态代理实现。
+        val supplierType = Class.forName("java.util.function.Supplier")
+        val supplier = Proxy.newProxyInstance(supplierType.classLoader, arrayOf(supplierType)) { proxy, method, args ->
+            when (method.name) {
+                "get" -> connector
+                "hashCode" -> System.identityHashCode(proxy)
+                "equals" -> proxy === args?.firstOrNull()
+                "toString" -> "DiPlayTetheringSupplier"
+                else -> null
+            }
+        }
+        val manager = managerType.getDeclaredConstructor(Context::class.java, supplierType)
             .apply { isAccessible = true }
-            .newInstance(ShellContext(), Supplier<IBinder> { connector })
+            .newInstance(ShellContext(), supplier)
         val builder = Class.forName("android.net.TetheringManager\$TetheringRequest\$Builder")
             .getConstructor(Int::class.javaPrimitiveType).newInstance(TETHERING_WIFI)
         val request = builder.javaClass.getMethod("build").invoke(builder)

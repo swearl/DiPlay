@@ -1,4 +1,4 @@
-package com.shilapi.xcertplay
+﻿package com.shilapi.xcertplay
 
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothManager
@@ -34,7 +34,7 @@ object BluetoothDiagnosticSnapshot {
     fun capture(context: Context): Snapshot {
         // 精简移植：目标平台固定 API 19。
         val apiLevel = 19
-        val manager = runCatching { context.getSystemService(BluetoothManager::class.java) }.getOrNull()
+        val manager = runCatching { (context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager) }.getOrNull()
         val hasBluetoothManager = manager != null
         val managerAdapter = runCatching { manager?.adapter }.getOrNull()
         val hasManagerAdapter = managerAdapter != null

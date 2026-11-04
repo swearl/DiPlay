@@ -69,7 +69,8 @@ internal object AppAppearanceRuntime {
             hostNight = night
             if (changed) observers.values.toList() else emptyList()
         }
-        callbacks.forEach { callback -> callback(night) }
+        // API 19 无 Iterable#forEach 默认方法，改为 for-in 循环
+        for (callback in callbacks) callback(night)
     }
 
     fun clearHost(owner: Any) {
@@ -80,7 +81,7 @@ internal object AppAppearanceRuntime {
             hostNight = null
             observers.values.toList()
         }
-        callbacks.forEach { callback -> callback(null) }
+        for (callback in callbacks) callback(null)
     }
 
     /**

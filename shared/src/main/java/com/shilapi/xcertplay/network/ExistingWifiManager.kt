@@ -1,11 +1,9 @@
 package com.shilapi.xcertplay.network
 
+import android.content.BroadcastReceiver
 import android.content.Context
-import android.net.ConnectivityManager
-import android.net.LinkProperties
-import android.net.Network
-import android.net.NetworkCapabilities
-import android.net.NetworkRequest
+import android.content.Intent
+import android.content.IntentFilter
 import android.net.wifi.WifiInfo
 import android.net.wifi.WifiManager
 import android.os.Looper
@@ -26,31 +24,23 @@ class ExistingWifiManager(
     private val onNetworkChanged: () -> Unit = {},
     private val preferredInterface: String? = null,
 ) : WirelessHotspotManager {
-    private val connectivity = context.applicationContext.getSystemService(ConnectivityManager::class.java)
-        ?: throw IllegalStateException("ConnectivityManager is unavailable")
-    private val wifi = context.applicationContext.getSystemService(WifiManager::class.java)
+    private val appContext = context.applicationContext
+    // 精简移植：Context.getSystemService(Class) 为 API 23+，改用经典字符串常量。
+    private val wifi = appContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
         ?: throw IllegalStateException("WifiManager is unavailable")
     private val lock = Any()
     private val invalidated = AtomicBoolean()
     @Volatile private var closed = false
-    @Volatile private var selected: Network? = null
     @Volatile private var host: InetAddress? = null
     @Volatile private var hosts: List<InetAddress> = emptyList()
     private var interfaceIndex = 0
     @Volatile private var interfaceName: String? = null
-    private var callbackRegistered = false
+    private var receiverRegistered = false
 
-    private val callback = object : ConnectivityManager.NetworkCallback() {
-        override fun onLost(network: Network) {
-            if (network == selected) invalidate("network lost")
-        }
-
-        override fun onLinkPropertiesChanged(network: Network, properties: LinkProperties) {
-            // With an explicit interface the platform network may be discovered only after
-            // attaching, so track the interface name until a network is selected.
-            val tracked = network == selected ||
-                (selected == null && properties.interfaceName == interfaceName)
-            if (tracked && !sameLink(properties)) invalidate("interface or address changed")
+    // 精简移植：API 19 没有 NetworkCallback，改用 Wi-Fi 状态/网络状态广播近似检测链路变化。
+    private val networkStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (!linkStillMatches()) invalidate("interface or address changed")
         }
     }
 
@@ -65,38 +55,23 @@ class ExistingWifiManager(
             "ExistingWifiManager.start must not run on the main thread"
         }
         require(timeoutMillis > 0) { "timeoutMillis must be positive" }
-        check(selected == null) { "ExistingWifiManager has already started" }
+        check(interfaceName == null) { "ExistingWifiManager has already started" }
         val started = System.nanoTime()
         // An explicit interface covers units whose station LAN runs on an interface Android never
         // reports as Wi-Fi, such as a USB NIC presenting itself as eth1 (#573 family). The SSID and
         // security checks below read WifiInfo, which such an interface cannot provide.
         val configured = preferredInterface?.trim()?.takeIf { it.isNotEmpty() }
         while (!closed) {
-            // INTERNET/VALIDATED and the default route do not identify the CarPlay LAN.
-            val network: Network? = if (configured != null) {
-                connectivity.allNetworks.firstOrNull {
-                    connectivity.getLinkProperties(it)?.interfaceName == configured
-                }
+            // 精简移植：API 19 无法枚举 Network/LinkProperties，改用 WifiInfo.ipAddress 在
+            // NetworkInterface 中定位当前站点接口；显式指定接口时按名称直接查找。
+            val iface: NetworkInterface? = if (configured != null) {
+                runCatching { NetworkInterface.getByName(configured) }.getOrNull()
             } else {
-                val networks = connectivity.allNetworks.filter { candidate ->
-                    connectivity.getNetworkCapabilities(candidate)?.let {
-                        it.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) &&
-                            !it.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
-                    } == true
-                }
-                if (networks.size > 1) {
-                    throw IOException("Multiple Wi-Fi networks are active; keep one existing Wi-Fi connection")
-                }
-                networks.singleOrNull()
+                interfaceForStationAddress(stationIpAddress())
             }
-            val properties = network?.let(connectivity::getLinkProperties)
-            val name = properties?.interfaceName ?: configured
-            val iface = name?.let { runCatching { NetworkInterface.getByName(it) }.getOrNull() }
-            val linkAddresses: List<InetAddress> = when {
-                properties != null -> properties.linkAddresses.map { it.address }
-                iface != null -> Collections.list(iface.inetAddresses)
-                else -> emptyList()
-            }
+            val name = iface?.name
+            val linkAddresses: List<InetAddress> =
+                iface?.let { Collections.list(it.inetAddresses) } ?: emptyList()
             val address = if (iface == null) null else wirelessHostAddress(linkAddresses, iface.index)
             if (iface != null && name != null && address != null) {
                 val addresses = existingWifiHostAddresses(linkAddresses, iface.index)
@@ -105,7 +80,6 @@ class ExistingWifiManager(
                 var apBssid: ByteArray? = null
                 var networkNameReadable = false
                 if (configured == null) {
-                    val capabilities = connectivity.getNetworkCapabilities(network)
                     // 精简移植：目标平台 API 19 只有经典 connectionInfo 站点快照可用。
                     @Suppress("DEPRECATION")
                     val stationInfo = try { wifi.connectionInfo } catch (_: SecurityException) { null }
@@ -115,30 +89,22 @@ class ExistingWifiManager(
                     if (liveSsid != null && liveSsid != ssid) {
                         throw IOException("Configured Wi-Fi does not match the connected network; check Wi-Fi settings and saved details")
                     }
-                    frequency = info?.frequency?.takeIf { it > 0 }
-                    channel = frequency?.let(::wifiFrequencyMhzToChannel) ?: 0
+                    // API 19 无 WifiInfo.getFrequency（API 21），信道信息降级为未知
+                    frequency = null
+                    channel = 0
                     apBssid = accessPointAddress(info?.bssid)
                 }
                 synchronized(lock) {
                     check(!closed) { "ExistingWifiManager is closed" }
-                    selected = network
                     host = address
                     hosts = addresses
                     interfaceIndex = iface.index
                     interfaceName = name
-                    // With an explicit interface the network may lack the Wi-Fi transport (or not be
-                    // visible at all), so the request drops the transport and matches by name.
-                    val request = requestWithoutDefaultCapabilities()
-                    if (configured == null) request.addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
-                    connectivity.registerNetworkCallback(
-                        request.addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN).build(), callback)
-                    callbackRegistered = true
+                    registerNetworkStateReceiverLocked()
                 }
-                // Close the gap between reading the link and registering the callback. With an
-                // explicit interface that the platform does not expose as a Network there is no
-                // LinkProperties to compare, so only the invalidation flag is checked.
-                val current = if (network == null) null else connectivity.getLinkProperties(network)
-                if ((current != null && !sameLink(current)) || invalidated.get()) {
+                // Close the gap between reading the link and registering the receiver: if the
+                // stored interface or address no longer matches, treat the link as changed.
+                if (invalidated.get() || !linkStillMatches()) {
                     throw IOException("Existing Wi-Fi changed during startup; connect again")
                 }
                 onDiagnostic("Existing Wi-Fi attached iface=$name host=${address.hostAddress} " +
@@ -169,10 +135,6 @@ class ExistingWifiManager(
         throw IOException("Existing Wi-Fi attachment was cancelled")
     }
 
-    private fun sameLink(properties: LinkProperties): Boolean =
-        properties.interfaceName == interfaceName && properties.linkAddresses.any { it.address == host } &&
-            existingWifiHostAddresses(properties.linkAddresses.map { it.address }, interfaceIndex).toSet() == hosts.toSet()
-
     private fun security(): Iap2WirelessSecurity =
         if (passphrase.isEmpty()) Iap2WirelessSecurity.NONE else Iap2WirelessSecurity.WPA_WPA2
 
@@ -200,17 +162,57 @@ class ExistingWifiManager(
     override fun close() {
         synchronized(lock) {
             closed = true
-            if (callbackRegistered) {
-                connectivity.unregisterNetworkCallback(callback)
-                callbackRegistered = false
+            if (receiverRegistered) {
+                runCatching { appContext.unregisterReceiver(networkStateReceiver) }
+                receiverRegistered = false
             }
         }
     }
 
-    // 精简移植：NetworkRequest.Builder.clearCapabilities 为 API 30+，逐一移除默认能力。
-    private fun requestWithoutDefaultCapabilities(): NetworkRequest.Builder =
-        NetworkRequest.Builder()
-            .removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-            .removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)
-            .removeCapability(NetworkCapabilities.NET_CAPABILITY_TRUSTED)
+    @Suppress("DEPRECATION")
+    private fun stationIpAddress(): InetAddress? {
+        // 精简移植：WifiInfo.ipAddress 为小端序 int（API 19 经典字段），还原为 IPv4 地址。
+        val info = try { wifi.connectionInfo } catch (_: SecurityException) { null } ?: return null
+        val ip = info.ipAddress
+        if (ip == 0) return null
+        val bytes = byteArrayOf(
+            (ip and 0xff).toByte(),
+            (ip shr 8 and 0xff).toByte(),
+            (ip shr 16 and 0xff).toByte(),
+            (ip shr 24 and 0xff).toByte(),
+        )
+        return runCatching { InetAddress.getByAddress(bytes) }.getOrNull()
+    }
+
+    /** 精简移植：在系统网络接口中查找持有该站点 IPv4 地址的唯一接口。 */
+    private fun interfaceForStationAddress(address: InetAddress?): NetworkInterface? {
+        if (address == null) return null
+        val interfaces = runCatching {
+            NetworkInterface.getNetworkInterfaces()?.let { Collections.list(it) }
+        }.getOrNull().orEmpty()
+        val matches = interfaces.filter { candidate ->
+            Collections.list(candidate.inetAddresses).any { it.address.contentEquals(address.address) }
+        }
+        return matches.singleOrNull()
+    }
+
+    // 精简移植：API 19 无 LinkProperties，直接核对存储的接口名与地址集合是否仍与快照一致。
+    private fun linkStillMatches(): Boolean {
+        val name = interfaceName ?: return true
+        val iface = runCatching { NetworkInterface.getByName(name) }.getOrNull() ?: return false
+        val current = Collections.list(iface.inetAddresses)
+        return current.any { it == host } &&
+            existingWifiHostAddresses(current, iface.index).toSet() == hosts.toSet()
+    }
+
+    /** Caller must hold [lock]. Registers the Wi-Fi state receiver once. */
+    private fun registerNetworkStateReceiverLocked() {
+        if (receiverRegistered) return
+        val filter = IntentFilter().apply {
+            addAction(WifiManager.WIFI_STATE_CHANGED_ACTION)
+            addAction(WifiManager.NETWORK_STATE_CHANGED_ACTION)
+        }
+        runCatching { appContext.registerReceiver(networkStateReceiver, filter) }
+        receiverRegistered = true
+    }
 }

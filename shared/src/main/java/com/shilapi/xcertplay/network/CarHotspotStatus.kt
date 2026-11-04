@@ -1,4 +1,4 @@
-package com.shilapi.xcertplay.network
+﻿package com.shilapi.xcertplay.network
 
 import android.content.Context
 import android.content.IntentFilter
@@ -22,7 +22,7 @@ object CarHotspotStatus {
      */
     fun isEnabled(context: Context): Boolean? {
         val app = context.applicationContext
-        val wifi = app.getSystemService(WifiManager::class.java)
+        val wifi = (app.getSystemService(Context.WIFI_SERVICE) as? WifiManager)
         return read(
             state = { wifi?.let { WifiManager::class.java.getMethod("getWifiApState").invoke(it) as? Int } },
             enabled = { wifi?.let { WifiManager::class.java.getMethod("isWifiApEnabled").invoke(it) as? Boolean } },

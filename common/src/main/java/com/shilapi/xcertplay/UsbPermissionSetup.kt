@@ -19,7 +19,8 @@ internal object UsbPermissionSetup {
                 ACCESSIBILITY -> UsbAutoConfirmService.isEnabled(context) &&
                     Settings.Secure.getInt(context.contentResolver, Settings.Secure.ACCESSIBILITY_ENABLED, 0) == 1
                 USAGE -> HomeScreenMonitor.hasAccess(context)
-                OVERLAY -> Settings.canDrawOverlays(context)
+                // API 19 无 Settings.canDrawOverlays（API 23）：targetSdk 19 下安装时即授予
+                OVERLAY -> true
             }
         }.getOrDefault(false)
     }

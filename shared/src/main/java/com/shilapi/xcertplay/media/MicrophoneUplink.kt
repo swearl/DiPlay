@@ -160,17 +160,14 @@ internal class MicrophoneUplink(
 
     private fun createRecorder(source: Int, channelMask: Int, bufferSize: Int): AudioRecord? {
         val recorder = try {
-            AudioRecord.Builder()
-                .setAudioSource(source)
-                .setAudioFormat(
-                    AndroidAudioFormat.Builder()
-                        .setEncoding(AndroidAudioFormat.ENCODING_PCM_16BIT)
-                        .setSampleRate(config.sampleRate)
-                        .setChannelMask(channelMask)
-                        .build(),
-                )
-                .setBufferSizeInBytes(bufferSize)
-                .build()
+            // 精简移植：AudioRecord.Builder 为 API 23+，改用旧构造器
+            AudioRecord(
+                source,
+                config.sampleRate,
+                channelMask,
+                AndroidAudioFormat.ENCODING_PCM_16BIT,
+                bufferSize,
+            )
         } catch (error: Exception) {
             Log.e(TAG, "microphone recorder creation failed source=$source", error)
             stats.failure(MicrophoneFailureStage.RECORDER_CREATION, error)
@@ -279,7 +276,8 @@ internal class MicrophoneUplink(
         try {
             while (running.get()) {
                 stats.reading()
-                val count = recorder.read(readBuffer, 0, readBuffer.size, AudioRecord.READ_BLOCKING)
+                // 精简移植：带 readMode 的 read 重载为 API 23+；旧 read 本身即阻塞语义
+                val count = recorder.read(readBuffer, 0, readBuffer.size)
                 stats.read(count)
                 if (count > 0) clock?.read(recorder, count / 2)
                 if (count < 0) {
@@ -412,7 +410,8 @@ internal class MicrophoneUplink(
         }
     }
 
-    private fun routeType(recorder: AudioRecord): Int? = runCatching { recorder.routedDevice?.type }.getOrNull()
+    // 精简移植：getRoutedDevice/AudioDeviceInfo 为 API 23+，API 19 无法查询录音路由设备
+    private fun routeType(recorder: AudioRecord): Int? = null
 
     /**
      * The audio mode and the sources of the other recordings running now. A head unit that stays in
@@ -420,9 +419,8 @@ internal class MicrophoneUplink(
      * Other apps' recordings carry no package name for a normal app, only their source.
      */
     private fun silenceDetail(manager: AudioManager, ownSession: Int): String {
-        val others = manager.activeRecordingConfigurations
-            .filter { it.clientAudioSessionId != ownSession }
-            .map { MicrophoneCaptureStats.sourceName(it.clientAudioSource) }
+        // 精简移植：getActiveRecordingConfigurations 为 API 26+，无法枚举其他应用的录音
+        val others = emptyList<String>()
         return "audioMode=${manager.mode} otherRecordings=" +
             if (others.isEmpty()) "none" else others.take(MAX_LISTED_RECORDINGS).joinToString(",", "[", "]")
     }
@@ -485,7 +483,8 @@ internal class MicrophoneUplink(
         running.set(false)
         val currentEffects = effects
         effects = emptyList()
-        currentEffects.forEach(::releaseEffect)
+        // 精简移植：Iterable.forEach 为 API 24+，改用 for 循环
+        for (effect in currentEffects) releaseEffect(effect)
         echoCanceller?.close()
         echoCanceller = null
         val currentRecorder = recorder
@@ -540,7 +539,6 @@ internal fun telephonyMicrophoneSource(speakerphoneCall: Boolean, carPhoneState:
  * timestamp when the platform has one, otherwise assumes the newest sample arrived [FALLBACK_LATENCY_NS] ago.
  */
 internal class CaptureClock(private val sampleRate: Int) {
-    private val timestamp = android.media.AudioTimestamp()
     private var samplesRead = 0L
     private var lastReadSamples = 0
     private var lastReadEndNs = 0L
@@ -548,15 +546,8 @@ internal class CaptureClock(private val sampleRate: Int) {
     fun read(recorder: AudioRecord, samples: Int) {
         samplesRead += samples
         lastReadSamples = samples
-        val now = System.nanoTime()
-        val stamped = runCatching {
-            recorder.getTimestamp(timestamp, android.media.AudioTimestamp.TIMEBASE_MONOTONIC) == AudioRecord.SUCCESS
-        }.getOrDefault(false)
-        lastReadEndNs = if (stamped && timestamp.nanoTime > 0) {
-            timestamp.nanoTime + (samplesRead - timestamp.framePosition) * 1_000_000_000L / sampleRate
-        } else {
-            now - FALLBACK_LATENCY_NS
-        }
+        // 精简移植：AudioRecord.getTimestamp 为 API 24+，以最新样本到达时间减固定延迟近似
+        lastReadEndNs = System.nanoTime() - FALLBACK_LATENCY_NS
     }
 
     /** The capture time of the end of the first [samplesIntoRead] samples of the latest read. */

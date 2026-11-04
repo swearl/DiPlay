@@ -74,7 +74,7 @@ internal class CarPlayPicturePanel(
             setOnCheckedChangeListener { _, checked ->
                 if (!adjustmentsAvailable) return@setOnCheckedChangeListener
                 CarPlayPicture.showOriginal(checked)
-                controls.values.forEach { it.second.isEnabled = adjustmentsAvailable && !checked }
+                for (value in controls.values) value.second.isEnabled = adjustmentsAvailable && !checked
             }
         }
         addView(original, LayoutParams(-1, dp(48)))
@@ -86,7 +86,8 @@ internal class CarPlayPicturePanel(
                 if (!adjustmentsAvailable) return@setOnClickListener
                 original.isChecked = false
                 CarPlayPicture.reset(prefs)
-                controls.forEach { (key, pair) ->
+                // API 19 无 Map#forEach 默认方法，改为 for-in 解构
+                for ((key, pair) in controls) {
                     pair.second.progress = CarPlayPicture.defaultValue(key) - CarPlayPicture.range(key).first
                 }
             }
@@ -114,8 +115,7 @@ internal class CarPlayPicturePanel(
                     )
                 }
                 is SeekBar -> {
-                    view.progressTintList = android.content.res.ColorStateList.valueOf(palette.overlayAccent)
-                    view.thumbTintList = android.content.res.ColorStateList.valueOf(palette.overlayAccent)
+                    // API 19 无 progress/thumbTintList（API 21），进度条使用系统默认配色
                 }
                 is DiPlayButton -> view.style(DiPlayButtonKind.PRIMARY, palette, overlay = true)
                 is TextView -> view.setTextColor(palette.overlayPrimaryText)

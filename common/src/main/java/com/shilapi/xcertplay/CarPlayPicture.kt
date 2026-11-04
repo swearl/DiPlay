@@ -20,7 +20,7 @@ internal object CarPlayPicture {
     /** Transient A/B comparison; never written to preferences or left on after panel closure. */
     fun showOriginal(show: Boolean) {
         originalPreview = show
-        previewListeners.toList().forEach { it() }
+        for (listener in previewListeners.toList()) listener()
     }
 
     class Binding(private val view: TextureView) : java.io.Closeable {
@@ -47,7 +47,7 @@ internal object CarPlayPicture {
     fun reset(prefs: SharedPreferences) {
         // clear() does not notify listeners on Android 10. Explicit values update live views.
         val editor = prefs.edit()
-        keys.forEach { editor.putInt(it, defaultValue(it)) }
+        for (key in keys) editor.putInt(key, defaultValue(key))
         editor.apply()
     }
 

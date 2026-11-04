@@ -15,11 +15,15 @@ internal object HevcSupport {
         requested && (decoders.any { it.hardware } || softwareChosen && decoders.isNotEmpty())
 
     fun decoders(): List<Decoder> = runCatching {
-        MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.filter { info ->
-            !info.isEncoder && info.supportedTypes.any { it.equals(MediaFormat.MIMETYPE_VIDEO_HEVC, ignoreCase = true) }
-        }.map { info ->
-            // 精简移植：API 19 无 isHardwareAccelerated，用经典 OMX.google./c2.android. 前缀判断。
-            Decoder(info.name, !info.name.startsWith("OMX.google.") && !info.name.startsWith("c2.android."))
+        // API 19 无 MediaCodecList 构造器（API 21），用静态 getCodecCount/getCodecInfoAt
+        val list = mutableListOf<Decoder>()
+        for (i in 0 until MediaCodecList.getCodecCount()) {
+            val info = MediaCodecList.getCodecInfoAt(i)
+            if (!info.isEncoder && info.supportedTypes.any { it.equals(MediaFormat.MIMETYPE_VIDEO_HEVC, ignoreCase = true) }) {
+                // 精简移植：API 19 无 isHardwareAccelerated，用经典 OMX.google./c2.android. 前缀判断。
+                list += Decoder(info.name, !info.name.startsWith("OMX.google.") && !info.name.startsWith("c2.android."))
+            }
         }
+        list
     }.getOrDefault(emptyList())
 }

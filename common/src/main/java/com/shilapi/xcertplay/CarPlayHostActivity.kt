@@ -44,7 +44,6 @@ import android.text.TextWatcher
 import android.util.Log
 import android.view.Gravity
 import android.view.MotionEvent
-import android.view.PixelCopy
 import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
@@ -876,7 +875,9 @@ open class CarPlayHostActivity : Activity() {
         } else if (microphonePermissionResolved) {
             requestStartupPrerequisites()
         } else {
-            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), RC_MIC)
+            // targetSdk 19 无运行时权限（requestPermissions 为 API 23）：权限安装时即授予，
+            // 直接按已授予走结果回调。
+            onMicrophonePermissionsResult(true)
         }
     }
 
@@ -992,21 +993,19 @@ open class CarPlayHostActivity : Activity() {
         if (missing.isEmpty()) return false
         if (!awaitingWiredPermissions) {
             awaitingWiredPermissions = true
-            requestPermissions(missing.toTypedArray(), RC_WIRED_PERMS)
+            // targetSdk 19 无运行时权限：权限安装时即授予，直接按已授予走结果回调。
+            onWiredPermissionsResult(true)
         }
         return true
     }
 
     private fun requestLocationPermission() {
         if (locationPermissionAvailable || awaitingLocationPermission) return
-        awaitingLocationPermission = true
-        requestPermissions(
-            arrayOf(
-                Manifest.permission.ACCESS_FINE_LOCATION,
-                Manifest.permission.ACCESS_COARSE_LOCATION,
-            ),
-            RC_LOCATION,
-        )
+        // targetSdk 19 无运行时权限：定位权限安装时即授予，直接按已授予走结果回调。
+        onLocationPermissionsResult(mapOf(
+            Manifest.permission.ACCESS_FINE_LOCATION to true,
+            Manifest.permission.ACCESS_COARSE_LOCATION to true,
+        ))
     }
 
     private fun hasFineLocationPermission(): Boolean =
@@ -1101,7 +1100,8 @@ open class CarPlayHostActivity : Activity() {
         wirelessPermissionsReady = false
         updateHotspotStatusBlock()
         awaitingWirelessPermissions = true
-        requestPermissions(permissions.toTypedArray(), RC_WIRELESS_PERMS)
+        // targetSdk 19 无运行时权限：权限安装时即授予，直接按已授予走结果回调。
+        onWirelessPermissionsResult(true)
     }
 
     private fun hasRequiredWirelessPermissions(): Boolean =
@@ -1384,7 +1384,8 @@ open class CarPlayHostActivity : Activity() {
     private fun ensureDiLink51ClusterPresentation(theme: DiLink51ClusterLayout.Theme) {
         val fullMap = theme == DiLink51ClusterLayout.Theme.MAP
         val visible = !DiLink51ClusterLayout.automatic(this) || detectedCluster.mapVisible
-        clusterLayers.filterKeys { it != fullMap }.values.forEach { it.setMapVisible(false) }
+        // API 19 无 Iterable#forEach 默认方法，改为 for-in 循环
+        for (layer in clusterLayers.filterKeys { it != fullMap }.values) layer.setMapVisible(false)
         var target = clusterLayers[fullMap]
         if (target == null) {
             val display = ClusterMapPresentation.findDisplay(this, theme) ?: return
@@ -1461,7 +1462,7 @@ open class CarPlayHostActivity : Activity() {
         clusterPresentation = null
         clusterSurface?.let { sink?.clearSurface(SCREEN_TYPE_ALT, it) }
         clusterSurface = null
-        presentations.forEach { runCatching { it.dismiss() } }
+        for (presentation in presentations) runCatching { presentation.dismiss() }
         controller?.setDashboardMapOutputVisible(false)
     }
 
@@ -2133,6 +2134,17 @@ open class CarPlayHostActivity : Activity() {
             visibility = View.GONE
             background = sidePanelBackground()
         }
+        run {
+            // API 19 无 setLayerGravity（API 23）：布局完成后按视图尺寸用绝对 inset 定位握边
+            val layers = panel.background as? android.graphics.drawable.LayerDrawable
+            panel.viewTreeObserver.addOnPreDrawListener(object : android.view.ViewTreeObserver.OnPreDrawListener {
+                override fun onPreDraw(): Boolean {
+                    panel.viewTreeObserver.removeOnPreDrawListener(this)
+                    if (layers != null) positionSidePanelGrip(panel, layers)
+                    return true
+                }
+            })
+        }
         panel.setOnTouchListener { view, event -> onSidePanelTouch(view, event) }
         val contents = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -2176,12 +2188,23 @@ open class CarPlayHostActivity : Activity() {
                 else -> setLayerInset(0, dp(10), 0, 0, bottom)
             }
             setLayerInset(1, 0, 0, 0, bottom)
-            setLayerGravity(1, when (sidePanelEdge) {
-                Gravity.TOP -> Gravity.TOP or Gravity.CENTER_HORIZONTAL
-                Gravity.END -> Gravity.RIGHT or Gravity.CENTER_VERTICAL
-                else -> Gravity.LEFT or Gravity.CENTER_VERTICAL
-            })
+            // API 19 无 setLayerGravity（API 23）：握边位置由布局完成后的绝对 inset 计算（见调用处）
         }
+    }
+
+    /** 布局完成后把握边层居中定位到面向 CarPlay 的那条边（替代 API 23 的 setLayerGravity）。 */
+    private fun positionSidePanelGrip(panel: android.view.View, layers: android.graphics.drawable.LayerDrawable) {
+        val across = sidePanelEdge != Gravity.TOP
+        val gripW = if (across) dp(6) else dp(72)
+        val gripH = if (across) dp(72) else dp(6)
+        val left: Int; val top: Int
+        when (sidePanelEdge) {
+            Gravity.TOP -> { left = (panel.width - gripW) / 2; top = 0 }
+            Gravity.END -> { left = panel.width - gripW; top = (panel.height - gripH) / 2 }
+            else -> { left = 0; top = (panel.height - gripH) / 2 }
+        }
+        layers.setLayerInset(1, left, top, (panel.width - gripW - left).coerceAtLeast(0),
+            (panel.height - gripH - top).coerceAtLeast(0))
     }
 
     /**
@@ -2340,7 +2363,11 @@ open class CarPlayHostActivity : Activity() {
         val across = from != Gravity.BOTTOM
         val reach = dp(64)
         val length = dp(160)
-        if (from != sidePanelTabFrom) tab.background = sidePanelTabPill(from).apply { alpha = if (sidePanelTabHint) 255 else 0 }
+        if (from != sidePanelTabFrom) {
+            // API 19 无 setLayerGravity/setLayerInsetXxx（API 23）：pill 用绝对 inset 定位
+            tab.background = sidePanelTabPill(from, if (across) reach else length,
+                if (across) length else reach).apply { alpha = if (sidePanelTabHint) 255 else 0 }
+        }
         sidePanelTabFrom = from
         val areas = sessionDisplay?.viewAreas
         if (areas !== sidePanelTabHintFor) {
@@ -2371,7 +2398,8 @@ open class CarPlayHostActivity : Activity() {
         mainHandler.postDelayed(sidePanelTabFade, SIDE_PANEL_TAB_HINT_MILLIS)
     }
 
-    private fun sidePanelTabPill(from: Int): Drawable {
+    /** [viewWidth]/[viewHeight] 为宿主视图尺寸，pill 在其中按屏幕边缘居中并留出 [dp(20)] 边距。 */
+    private fun sidePanelTabPill(from: Int, viewWidth: Int, viewHeight: Int): Drawable {
         val across = from != Gravity.BOTTOM
         val pill = GradientDrawable().apply {
             setColor(0xDDFFFFFF.toInt())
@@ -2379,17 +2407,18 @@ open class CarPlayHostActivity : Activity() {
             cornerRadius = dp(4).toFloat()
             setSize(if (across) dp(8) else dp(88), if (across) dp(88) else dp(8))
         }
+        val pillW = if (across) dp(8) else dp(88)
+        val pillH = if (across) dp(88) else dp(8)
+        val edge = dp(20)
+        val left: Int; val top: Int
+        when (from) {
+            Gravity.BOTTOM -> { left = (viewWidth - pillW) / 2; top = viewHeight - pillH - edge }
+            Gravity.LEFT -> { left = edge; top = (viewHeight - pillH) / 2 }
+            else -> { left = viewWidth - pillW - edge; top = (viewHeight - pillH) / 2 }
+        }
         return LayerDrawable(arrayOf(pill)).apply {
-            setLayerGravity(0, when (from) {
-                Gravity.BOTTOM -> Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-                Gravity.LEFT -> Gravity.LEFT or Gravity.CENTER_VERTICAL
-                else -> Gravity.RIGHT or Gravity.CENTER_VERTICAL
-            })
-            when (from) {
-                Gravity.BOTTOM -> setLayerInsetBottom(0, dp(20))
-                Gravity.LEFT -> setLayerInsetLeft(0, dp(20))
-                else -> setLayerInsetRight(0, dp(20))
-            }
+            setLayerInset(0, left, top, (viewWidth - pillW - left).coerceAtLeast(0),
+                (viewHeight - pillH - top).coerceAtLeast(0))
         }
     }
 
@@ -2513,14 +2542,15 @@ open class CarPlayHostActivity : Activity() {
 
     private fun dropHeldSidePanelTabTouch() {
         mainHandler.removeCallbacks(sidePanelTabLongPress)
-        sidePanelTabHeld.forEach(MotionEvent::recycle)
+        // API 19 无 Iterable#forEach 默认方法，改为 for-in 循环
+        for (held in sidePanelTabHeld) held.recycle()
         sidePanelTabHeld.clear()
     }
 
     /** The touch on the tab is not a drag: CarPlay gets what it held back, [event], and the rest of the touch. */
     private fun handSidePanelTabTouchToCarPlay(tab: View, event: MotionEvent? = null) {
         mainHandler.removeCallbacks(sidePanelTabLongPress)
-        sidePanelTabHeld.forEach { held ->
+        for (held in sidePanelTabHeld) {
             forwardSidePanelTabTouch(tab, held)
             held.recycle()
         }
@@ -2733,7 +2763,7 @@ open class CarPlayHostActivity : Activity() {
         val panel = FrameLayout(this).apply {
             background = swipeMenuChrome()
             clipToOutline = true
-            elevation = dp(SWIPE_PANEL_ELEVATION_DP).toFloat()
+            // API 19 无 View.setElevation（API 21），层级降级
         }
         val categories = listOf(
             "connection" to R.string.connection,
@@ -2745,7 +2775,8 @@ open class CarPlayHostActivity : Activity() {
             "more" to R.string.settings_more,
         )
         val pages = LinkedHashMap<String, LinearLayout>()
-        categories.forEach { (key, title) ->
+        // API 19 无 Iterable#forEach 默认方法，改为 for-in 解构
+        for ((key, title) in categories) {
             pages[key] = LinearLayout(this).apply {
                 tag = key
                 orientation = LinearLayout.VERTICAL
@@ -3122,7 +3153,8 @@ open class CarPlayHostActivity : Activity() {
         val pageHost = FrameLayout(this)
         val selectedPage = settingsMenuCategoryKey.takeIf(pages::containsKey) ?: "connection"
         settingsMenuCategoryKey = selectedPage
-        pages.forEach { (key, page) ->
+        // API 19 无 Iterable#forEach 默认方法，改为 for-in 解构
+        for ((key, page) in pages) {
             page.visibility = if (key == selectedPage) View.VISIBLE else View.GONE
             pageHost.addView(page, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -3143,10 +3175,10 @@ open class CarPlayHostActivity : Activity() {
         lateinit var chips: HorizontalScrollView
         fun selectCategory(key: String) {
             settingsMenuCategoryKey = key
-            pages.forEach { (candidate, page) ->
+            for ((candidate, page) in pages) {
                 page.visibility = if (candidate == key) View.VISIBLE else View.GONE
             }
-            categoryButtons.forEach { (candidate, button) ->
+            for ((candidate, button) in categoryButtons) {
                 button.style(if (candidate == key) DiPlayButtonKind.PRIMARY else DiPlayButtonKind.SECONDARY,
                     overlayPalette, overlay = true)
             }
@@ -3170,7 +3202,7 @@ open class CarPlayHostActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(SWIPE_CHROME_PADDING_DP), dp(SWIPE_CHROME_PADDING_DP),
                 dp(SWIPE_CHROME_PADDING_DP), dp(SWIPE_CHROME_PADDING_DP))
-            categories.forEach { (key, title) ->
+            for ((key, title) in categories) {
                 addView(categoryButton(key, title), LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                     bottomMargin = dp(SWIPE_ACTION_GAP_DP)
@@ -3186,7 +3218,7 @@ open class CarPlayHostActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             setPadding(dp(SWIPE_CHROME_PADDING_DP), dp(SWIPE_ACTION_GAP_DP),
                 dp(SWIPE_CHROME_PADDING_DP), dp(SWIPE_ACTION_GAP_DP))
-            categories.forEach { (key, title) ->
+            for ((key, title) in categories) {
                 addView(categoryButton(key, title), LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                     marginEnd = dp(SWIPE_ACTION_GAP_DP)
@@ -3389,7 +3421,8 @@ open class CarPlayHostActivity : Activity() {
         val previewChangedSystemBars = hideTopBar != AirPlayPersistence.loadHideTopBar(this) ||
             hideBottomBar != AirPlayPersistence.loadHideBottomBar(this)
         loadPersistedSettings()
-        baseline.safeAreaRects.forEach { (size, savedRect) ->
+        // API 19 无 Iterable#forEach 默认方法，改为 for-in 解构
+        for ((size, savedRect) in baseline.safeAreaRects) {
             savedRect?.let { rect ->
                 AirPlayPersistence.saveSafeAreaRect(
                     this,
@@ -4507,8 +4540,16 @@ open class CarPlayHostActivity : Activity() {
         val mime = if (sessionHevc) MediaFormat.MIMETYPE_VIDEO_HEVC else MediaFormat.MIMETYPE_VIDEO_AVC
         // Match MediaCodec.createDecoderByType's first suitable decoder; do not silently force
         // an enlarged stream through a software decoder on a slower head unit.
-        val decoder = MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.firstOrNull {
-            !it.isEncoder && it.supportedTypes.any { type -> type.equals(mime, ignoreCase = true) }
+        val decoder = run {
+            // API 19 无 MediaCodecList 构造器（API 21），用静态 getCodecCount/getCodecInfoAt
+            var found: android.media.MediaCodecInfo? = null
+            for (i in 0 until MediaCodecList.getCodecCount()) {
+                val info = MediaCodecList.getCodecInfoAt(i)
+                if (!info.isEncoder && info.supportedTypes.any { type -> type.equals(mime, ignoreCase = true) }) {
+                    found = info; break
+                }
+            }
+            found
         }
         if (decoder == null) {
             CanvasSupport(false, "no_decoder", "Decoder capability mime=$mime result=no_decoder")
@@ -5988,9 +6029,13 @@ open class CarPlayHostActivity : Activity() {
 
     /** The default H.264 decoder, and the HEVC one when HEVC is on, if its pictures cannot be textures. */
     private fun textureUnsafeVideoDecoder(): String? = try {
-        val decoders = MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos
-            .filter { !it.isEncoder }
-            .map { VideoDecoderInfo(it.name, it.supportedTypes.toList()) }
+        // API 19 无 MediaCodecList 构造器（API 21），用静态 getCodecCount/getCodecInfoAt
+        val decoders = buildList {
+            for (i in 0 until MediaCodecList.getCodecCount()) {
+                val info = MediaCodecList.getCodecInfoAt(i)
+                if (!info.isEncoder) add(VideoDecoderInfo(info.name, info.supportedTypes.toList()))
+            }
+        }
         val mimes = listOfNotNull(MediaFormat.MIMETYPE_VIDEO_AVC, MediaFormat.MIMETYPE_VIDEO_HEVC.takeIf { hevcEnabled })
         textureUnsafeDecoder(decoders, mimes)
     } catch (error: RuntimeException) {
@@ -6050,25 +6095,10 @@ open class CarPlayHostActivity : Activity() {
         return if (id != 0) runCatching { resources.getDimensionPixelSize(id) }.getOrDefault(0) else 0
     }
 
-    // Copies the SurfaceView's current picture (at half size) before its surface goes, waiting briefly for it.
+    // Copies the SurfaceView's current picture (at half size) before its surface goes.
+    // API 19 无 PixelCopy（API 24）：SurfaceView 内容无法离屏拷贝，最后一帧快照降级为不可用。
     private fun captureLastPicture() {
-        val surfaceView = fallbackVideoView ?: return
-        val bounds = fallbackVideoBounds ?: return
-        if (!surfaceView.holder.surface.isValid) return
-        val picture = Bitmap.createBitmap((bounds.width / 2).coerceAtLeast(1), (bounds.height / 2).coerceAtLeast(1),
-            Bitmap.Config.ARGB_8888)
-        val done = java.util.concurrent.CountDownLatch(1)
-        val copied = java.util.concurrent.atomic.AtomicBoolean(false)
-        val requested = runCatching {
-            PixelCopy.request(surfaceView, picture, { result ->
-                copied.set(result == PixelCopy.SUCCESS)
-                done.countDown()
-            }, Handler(pictureCopyThread.looper))
-        }.isSuccess
-        if (requested) done.await(PICTURE_COPY_WAIT_MILLIS, java.util.concurrent.TimeUnit.MILLISECONDS)
-        // Not recycled by hand: the picture shown last may still be on screen when DiPlay leaves again.
-        if (copied.get()) lastPicture = picture
-        appendLog("Last picture kept=${copied.get()}")
+        appendLog("Last picture kept=false")
     }
 
     private fun showLastPicture() {
@@ -6662,7 +6692,8 @@ internal object CarPlayBackgroundSession {
                 stopping = false
                 stopWaiters.toList().also { stopWaiters.clear() }
             }
-            callbacks.forEach { it() }
+            // API 19 无 Iterable#forEach 默认方法，改为 for-in 循环
+            for (callback in callbacks) callback()
         }
     }
 

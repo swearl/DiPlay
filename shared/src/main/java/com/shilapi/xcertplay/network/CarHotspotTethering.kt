@@ -3,7 +3,6 @@ package com.shilapi.xcertplay.network
 import android.content.Context
 import android.os.Bundle
 import android.os.ResultReceiver
-import android.provider.Settings
 import com.shilapi.xcertplay.adb.AdbKeys
 import com.shilapi.xcertplay.adb.LocalAdb
 import java.lang.reflect.InvocationTargetException
@@ -25,7 +24,9 @@ object CarHotspotTethering {
         CANCELLED("Hotspot startup was cancelled"),
     }
 
-    fun permitted(context: Context): Boolean = Settings.System.canWrite(context)
+    // 精简移植：Settings.System.canWrite 为 API 23+；API 19 上 WRITE_SETTINGS 权限安装即授予，
+    // 直接视为已授权。
+    fun permitted(context: Context): Boolean = true
 
     /** Whether this Android version lets an app with [permitted] access start tethering itself, without ADB. */
     fun appStartSupported(): Boolean = PlatformTetheringStart.supported()

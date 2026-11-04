@@ -1,4 +1,4 @@
-package com.shilapi.xcertplay.location
+﻿package com.shilapi.xcertplay.location
 
 import android.annotation.SuppressLint
 import android.content.Context
@@ -23,13 +23,13 @@ class AndroidCarPlayLocationProvider(
     private val preferredLocationAgeMillis: Long = DEFAULT_PREFERRED_LOCATION_AGE_MILLIS,
 ) : Iap2LocationProvider {
     private val locationManager =
-        context.applicationContext.getSystemService(LocationManager::class.java)
+        (context.applicationContext.getSystemService(Context.LOCATION_SERVICE) as? LocationManager)
     private val stateLock = Any()
     private val preferredProviders = buildList {
         add(LocationManager.GPS_PROVIDER)
         // 精简移植：FUSED_PROVIDER 为 API 30+，目标平台不加入。
         add(LocationManager.NETWORK_PROVIDER)
-    }.filter { it in locationManager.allProviders }
+    }.filter { it in (locationManager?.allProviders ?: emptyList()) }
     private val latestFixes = ConcurrentHashMap<String, Location>()
     private val listener = object : LocationListener {
         override fun onLocationChanged(location: Location) {
@@ -55,7 +55,7 @@ class AndroidCarPlayLocationProvider(
             var subscribedProviders = 0
             for (provider in preferredProviders) {
                 try {
-                    locationManager.requestLocationUpdates(
+                    locationManager?.requestLocationUpdates(
                         provider,
                         UPDATE_INTERVAL_MILLIS,
                         MIN_DISTANCE_METERS,
@@ -79,7 +79,7 @@ class AndroidCarPlayLocationProvider(
     private fun seedLastKnownLocations() {
         for (provider in preferredProviders) {
             val location = try {
-                locationManager.getLastKnownLocation(provider)
+                locationManager?.getLastKnownLocation(provider)
             } catch (error: Exception) {
                 Log.w(TAG, "Could not read last known location from $provider", error)
                 null
@@ -100,7 +100,7 @@ class AndroidCarPlayLocationProvider(
         }
         if (!shouldUnregister) return
         try {
-            locationManager.removeUpdates(listener)
+            locationManager?.removeUpdates(listener)
         } catch (_: Exception) {
             // Already unregistered.
         }

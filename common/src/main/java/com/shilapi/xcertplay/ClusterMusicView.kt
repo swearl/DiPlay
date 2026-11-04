@@ -116,8 +116,10 @@ internal class ClusterMusicView(context: Context) : View(context) {
         val left = (width * ClusterMusicSettings.x(context) / 100f - side / 2).coerceIn(0f, width - side)
         val top = (height * ClusterMusicSettings.y(context) / 100f - side / 2).coerceIn(0f, height - side)
         val rect = RectF(left, top, left + side, top + side)
+        // API 19 无 saveLayerAlpha(RectF, Int)（API 21），用带 saveFlags 的旧重载
         val cardLayer = if (!ClusterMusicSettings.permanent(context))
-            canvas.saveLayerAlpha(rect, (captionAlpha * 255).toInt()) else canvas.save()
+            canvas.saveLayerAlpha(rect.left, rect.top, rect.right, rect.bottom,
+                (captionAlpha * 255).toInt(), Canvas.ALL_SAVE_FLAG) else canvas.save()
         // Match the speedometer's palette and corner radius relative to tile height.
         val radius = side * .22f
         paint.shader = null
@@ -164,7 +166,8 @@ internal class ClusterMusicView(context: Context) : View(context) {
 
     private fun drawCaption(canvas: Canvas, info: CarPlayNowPlaying, artRect: RectF, side: Float, alpha: Float) {
         if (alpha <= 0f || (info.title.isNullOrBlank() && info.artist.isNullOrBlank())) return
-        val layer = canvas.saveLayerAlpha(artRect, (alpha * 255).toInt())
+        val layer = canvas.saveLayerAlpha(artRect.left, artRect.top, artRect.right, artRect.bottom,
+            (alpha * 255).toInt(), Canvas.ALL_SAVE_FLAG)
         val pad = side * .075f
         val textLeft = artRect.left + pad
         val available = (artRect.width() - pad * 2).toInt().coerceAtLeast(1)
@@ -172,8 +175,13 @@ internal class ClusterMusicView(context: Context) : View(context) {
         textPaint.color = Color.WHITE
         textPaint.textSize = side * .125f
         val title = info.title.orEmpty()
-        val layout = StaticLayout.Builder.obtain(title, 0, title.length, textPaint, available)
-            .setMaxLines(2).setEllipsize(TextUtils.TruncateAt.END).setIncludePad(false).build()
+        // API 19 无 StaticLayout.Builder（API 23），用旧构造器；maxLines 降级为不限制行数
+        @Suppress("DEPRECATION")
+        val layout = StaticLayout(
+            title, 0, title.length, textPaint, available,
+            android.text.Layout.Alignment.ALIGN_NORMAL, 1f, 0f, false,
+            TextUtils.TruncateAt.END, title.length,
+        )
         val bandBottom = artRect.top + layout.height + side * .13f + pad * 3
         paint.shader = LinearGradient(0f, artRect.top, 0f, bandBottom,
             Color.argb(240, 12, 14, 18), Color.argb(160, 12, 14, 18), Shader.TileMode.CLAMP)

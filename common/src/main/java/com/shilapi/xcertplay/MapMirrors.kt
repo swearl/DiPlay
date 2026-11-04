@@ -25,7 +25,8 @@ internal object MapMirrors {
             require(value.isFinite() && value > 0)
             if (field == value) return
             field = value
-            main.post { aspectListeners.forEach { it() } }
+            // API 19 无 Iterable#forEach 默认方法，改为 for-in 循环
+            main.post { for (listener in aspectListeners) listener() }
         }
 
     /** The active dashboard stream's shape (defaults to PHYSICAL_STREAM_ASPECT or VIRTUAL_STREAM_ASPECT). */
@@ -42,7 +43,7 @@ internal object MapMirrors {
     /** The CarPlay screen has a new media sink: give it every mirror. */
     fun reapply() {
         val apply = sink ?: return
-        surfaces.forEach { (key, surface) -> apply(key, surface) }
+        for ((key, surface) in surfaces) apply(key, surface)
     }
 
     /** Called when the set of mirrors changes, so the dashboard map pause can stand aside. */
@@ -71,7 +72,7 @@ internal object MapMirrors {
         main.post {
             if (streamActive == active) return@post
             streamActive = active
-            streamListeners.forEach { it(active) }
+            for (listener in streamListeners) listener(active)
         }
     }
 

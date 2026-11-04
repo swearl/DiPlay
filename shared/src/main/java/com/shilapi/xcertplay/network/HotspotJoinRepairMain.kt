@@ -1,8 +1,6 @@
 package com.shilapi.xcertplay.network
 
 import android.os.Process
-import android.system.Os
-import android.system.OsConstants
 import java.io.File
 import java.io.IOException
 import kotlin.system.exitProcess
@@ -36,15 +34,18 @@ object HotspotJoinRepairMain {
         // 精简移植：修复事务依赖 Android 13+ 的 Wi-Fi 框架接口（SoftApConfiguration 等），
         // 目标平台 API 19 恒定不支持，直接返回 UNSUPPORTED。
         return HotspotJoinTransaction.Result(HotspotJoinTransaction.Status.UNSUPPORTED)
-        Os.umask(0x3f) // All new journal/lock/cancellation files start at 0600, directories at 0700.
+        // 精简移植：android.system.Os 为 API 21+，降级为 java.io.File 等价实现。
+        // 原 Os.umask(0x3f) 无法在 API 19 设置 umask，新建文件权限交由系统默认。
         val directory = File("/data/local/tmp/diplay-hotspot-join-$packageName")
-        if (!directory.exists()) Os.mkdir(directory.path, 0x1c0)
-        val stat = Os.lstat(directory.path)
-        if (!OsConstants.S_ISDIR(stat.st_mode) || stat.st_uid != uid || stat.st_mode and 0x3f != 0)
+        if (!directory.exists() && !directory.mkdirs()) throw IOException()
+        // 原 lstat/S_ISDIR/st_uid/st_mode 校验降级：API 19 无法读取文件属主与完整权限位，
+        // 仅校验目录类型与读写执行权限；符号链接风险改用规范路径校验规避。
+        if (!directory.isDirectory || !directory.canRead() || !directory.canWrite() ||
+            !directory.canExecute())
             throw IOException()
         for (file in directory.listFiles() ?: throw IOException()) {
-            val entry = Os.lstat(file.path)
-            if (!OsConstants.S_ISREG(entry.st_mode) || entry.st_uid != uid || entry.st_mode and 0x3f != 0)
+            if (!file.isFile || !file.canRead() || !file.canWrite() ||
+                file.canonicalPath != file.path)
                 throw IOException() // Never follow foreign/symlinked backup or lock paths.
         }
         val cancellation = File(directory, "cancel-$request")
@@ -58,12 +59,11 @@ object HotspotJoinRepairMain {
                 val port = try { HotspotJoinPlatform.connect() }
                     catch (_: Exception) { return@run HotspotJoinTransaction.Result(HotspotJoinTransaction.Status.UNSUPPORTED) }
                 val journal = HotspotJoinJournal(directory, port.firmware(), port.codec) {
+                    // 精简移植：原 Os.open(O_NOFOLLOW)/fstat/S_ISDIR/fsync 降级：API 19 无法对目录
+                    // fsync，仅用规范路径校验目录真实存在且非符号链接。
                     for (durableDirectory in listOf(directory.parentFile, directory)) {
-                        val fd = Os.open(durableDirectory.path, OsConstants.O_RDONLY or OsConstants.O_NOFOLLOW, 0)
-                        try {
-                            if (!OsConstants.S_ISDIR(Os.fstat(fd).st_mode)) throw IOException()
-                            Os.fsync(fd)
-                        } finally { Os.close(fd) }
+                        if (!durableDirectory.isDirectory ||
+                            durableDirectory.canonicalPath != durableDirectory.path) throw IOException()
                     }
                 }
                 journal.load() // Firmware validation before decoding/any repair action.

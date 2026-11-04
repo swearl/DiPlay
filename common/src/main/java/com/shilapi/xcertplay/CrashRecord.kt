@@ -45,14 +45,14 @@ internal object CrashRecord {
             val message = current.message?.lineSequence()?.firstOrNull()?.take(MAX_MESSAGE)
             appendLine((if (seen.size == 1) "" else "caused by ") + current.javaClass.name + (message?.let { ": $it" } ?: ""))
             val frames = current.stackTrace
-            frames.take(MAX_FRAMES).forEach { appendLine("  at $it") }
+            for (frame in frames.take(MAX_FRAMES)) appendLine("  at $frame")
             // A crash inside a framework call fills the first frames with Android's own; the DiYou card's
             // startActivity crash (#463) lost the DiPlay code that called it. Keep the first few of ours.
             val rest = frames.drop(MAX_FRAMES)
             val own = rest.filter(::ownFrame).take(MAX_OWN_FRAMES)
             if (own.isNotEmpty()) {
                 appendLine("  ... DiPlay frames further down:")
-                own.forEach { appendLine("  at $it") }
+                for (line in own) appendLine("  at $line")
             }
             if (rest.size > own.size) appendLine("  ... ${rest.size - own.size} more")
             current = current.cause

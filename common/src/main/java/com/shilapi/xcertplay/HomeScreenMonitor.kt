@@ -1,36 +1,27 @@
 package com.shilapi.xcertplay
 
-import android.app.usage.UsageEvents
-import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Handler
 import android.os.Looper
-import java.util.concurrent.Executors
-import java.util.concurrent.ScheduledExecutorService
-import java.util.concurrent.TimeUnit
 
 /**
  * Whether a home screen is in front (BYD's normal home, map home or MyCar, or whichever
- * launcher is the default home, such as a third-party car launcher), from the newest resumed
- * activity in the owner's Usage Access events or Accessibility events.
+ * launcher is the default home, such as a third-party car launcher), from foreground package
+ * notifications (accessibility or system service).
+ * API 19 没有 UsageStatsManager 轮询回退（API 21+），仅依赖外部前台通知。
  * Overlays and panels are not activities, so they leave the answer as it is.
  */
 internal class HomeScreenMonitor(context: Context, private val onChange: (Boolean) -> Unit) {
     private val context = context.applicationContext
     private val main = Handler(Looper.getMainLooper())
-    private var executor: ScheduledExecutorService? = null
-    // Poller thread only.
-    private var since = 0L
-    private var newestTime = 0L
-    private var newestPackage: String? = null
     @Volatile private var reported: Boolean? = null
     @Volatile private var homePackages = HOME_PACKAGES + KNOWN_CAR_LAUNCHERS
     private val listener: (String) -> Unit = ::handleForegroundPackage
     @Volatile private var active = false
 
-    val running: Boolean get() = active || executor != null
+    val running: Boolean get() = active
 
     /** Main thread. */
     fun start() {
@@ -41,15 +32,6 @@ internal class HomeScreenMonitor(context: Context, private val onChange: (Boolea
 
         // Register for external foreground updates (e.g. from AccessibilityService)
         foregroundListener = listener
-
-        // UsageStatsManager poller fallback
-        if (DiLink51ClusterMonitor.hasAccess(context)) {
-            since = System.currentTimeMillis() - FIRST_LOOK_BACK_MILLIS
-            newestTime = 0L
-            newestPackage = null
-            executor = Executors.newSingleThreadScheduledExecutor { Thread(it, "diplay-home-monitor").apply { isDaemon = true } }
-                .also { it.scheduleWithFixedDelay(::poll, 0, POLL_MILLIS, TimeUnit.MILLISECONDS) }
-        }
     }
 
     /** Main thread. */
@@ -58,8 +40,6 @@ internal class HomeScreenMonitor(context: Context, private val onChange: (Boolea
         if (foregroundListener === listener) {
             foregroundListener = null
         }
-        executor?.shutdownNow()
-        executor = null
         main.removeCallbacksAndMessages(null)
     }
 
@@ -74,32 +54,7 @@ internal class HomeScreenMonitor(context: Context, private val onChange: (Boolea
 
     private fun isHomePackage(pkg: String): Boolean = pkg in homePackages
 
-    private fun poll() {
-        val now = System.currentTimeMillis()
-        val events = runCatching { context.getSystemService(UsageStatsManager::class.java).queryEvents(since, now) }
-            .getOrNull() ?: return
-        val event = UsageEvents.Event()
-        while (events.hasNextEvent()) {
-            events.getNextEvent(event)
-            // MOVE_TO_FOREGROUND is ACTIVITY_RESUMED (API 29) under its older name.
-            @Suppress("DEPRECATION")
-            if (event.eventType == UsageEvents.Event.MOVE_TO_FOREGROUND && event.timeStamp >= newestTime) {
-                val pkg = event.packageName
-                newestTime = event.timeStamp
-                newestPackage = pkg
-            }
-        }
-        // Overlap, because events can arrive a little late.
-        since = (now - OVERLAP_MILLIS).coerceAtLeast(since)
-        val currentPkg = newestPackage ?: ""
-        handleForegroundPackage(currentPkg)
-    }
-
     companion object {
-        private const val POLL_MILLIS = 500L
-        private const val OVERLAP_MILLIS = 2_000L
-        private const val FIRST_LOOK_BACK_MILLIS = 10 * 60_000L
-
         @Volatile private var foregroundListener: ((String) -> Unit)? = null
 
         /** Notifies of a foreground package change from an accessibility or system service. */

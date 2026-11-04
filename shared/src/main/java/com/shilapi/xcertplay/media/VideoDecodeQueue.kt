@@ -79,7 +79,12 @@ internal class VideoDecodeQueue(
     }
 
     @Synchronized fun discardFrames() {
-        jobs.removeIf { it is VideoJob.Frame || it is VideoJob.Resync }
+        // 精简移植：Collection.removeIf 为 API 24+，改用迭代器循环删除
+        val iterator = jobs.iterator()
+        while (iterator.hasNext()) {
+            val job = iterator.next()
+            if (job is VideoJob.Frame || job is VideoJob.Resync) iterator.remove()
+        }
     }
 
     fun poll(timeoutMillis: Long): VideoJob? = jobs.poll(timeoutMillis, TimeUnit.MILLISECONDS)

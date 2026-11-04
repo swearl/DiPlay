@@ -57,8 +57,10 @@ internal object HotspotJoinCapability {
                     if (transaction != code || !active.get()) return true
                     try {
                         data.enforceInterface(DESCRIPTOR)
-                        val capability = data.readTypedObject(creator) ?: return true
-                        data.enforceNoDataAvail()
+                        // 精简移植：Parcel.readTypedObject 为 API 30+，等价展开为 null 标记 + createFromParcel。
+                        val capability = (if (data.readInt() != 0) creator.createFromParcel(data) else null)
+                            ?: return true
+                        // 精简移植：Parcel.enforceNoDataAvail 为 API 33+，API 19 无法校验残余数据，直接跳过。
                         val supported = capabilityType.getMethod("areFeaturesSupported", Long::class.javaPrimitiveType)
                             .invoke(capability, feature) == true
                         val channels = capabilityType.getMethod("getSupportedChannelList", Int::class.javaPrimitiveType)

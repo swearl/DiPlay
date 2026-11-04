@@ -22,7 +22,7 @@ internal object DisplayDiagnosticSnapshot {
     fun begin(context: Context, request: String, capability: String, effective: String): String {
         val attempt = UUID.randomUUID().toString()
         val editor = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-        fields.filter { it != "selection" }.forEach(editor::remove)
+        for (field in fields) if (field != "selection") editor.remove(field)
         editor.putString("attempt", attempt)
         for ((key, line) in listOf("request" to request, "capability" to capability, "effective" to effective)) {
             DiagnosticRedactor.redact(line)?.let { editor.putString(key, "${stamp()} $it") }

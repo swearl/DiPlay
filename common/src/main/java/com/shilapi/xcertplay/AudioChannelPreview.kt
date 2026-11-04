@@ -1,7 +1,7 @@
 package com.shilapi.xcertplay
 
-import android.media.AudioAttributes
 import android.media.AudioFormat
+import android.media.AudioManager
 import android.media.AudioTrack
 import android.os.Handler
 import android.os.Looper
@@ -41,25 +41,11 @@ internal class AudioChannelPreview(private val onUnavailable: (Int) -> Unit) : C
                 check(minimum > 0) { "No PCM output buffer is available" }
                 val bufferBytes = maxOf(minimum, SAMPLE_RATE / 10 * 2)
                 val built = if (channel == 0) {
-                    AudioTrack.Builder()
-                        .setAudioAttributes(
-                            AudioAttributes.Builder()
-                                .setUsage(if (navigation) AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE
-                                    else AudioAttributes.USAGE_MEDIA)
-                                .setContentType(if (navigation) AudioAttributes.CONTENT_TYPE_SPEECH
-                                    else AudioAttributes.CONTENT_TYPE_MUSIC)
-                                .build(),
-                        )
-                        .setAudioFormat(
-                            AudioFormat.Builder()
-                                .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                                .setSampleRate(SAMPLE_RATE)
-                                .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                                .build(),
-                        )
-                        .setTransferMode(AudioTrack.MODE_STREAM)
-                        .setBufferSizeInBytes(bufferBytes)
-                        .build()
+                    // API 19 无 AudioTrack.Builder/AudioAttributes（API 21+）：用旧构造器走媒体流，
+                    // 导航提示音同样映射到 STREAM_MUSIC。
+                    @Suppress("DEPRECATION")
+                    AudioTrack(AudioManager.STREAM_MUSIC, SAMPLE_RATE, AudioFormat.CHANNEL_OUT_MONO,
+                        AudioFormat.ENCODING_PCM_16BIT, bufferBytes, AudioTrack.MODE_STREAM)
                 } else {
                     // Match playback and let the head unit handle vendor-specific stream types.
                     @Suppress("DEPRECATION")
@@ -70,13 +56,13 @@ internal class AudioChannelPreview(private val onUnavailable: (Int) -> Unit) : C
                 check(built.state == AudioTrack.STATE_INITIALIZED) { "Audio output did not initialize" }
                 if (closed || generation.get() != request) return@submit
                 activeTrack.set(built)
-                built.setVolume(0.6f)
+                // API 19 无 AudioTrack.setVolume（API 21），用立体声音量
+                built.setStereoVolume(0.6f, 0.6f)
                 built.play()
                 var written = 0
                 while (written < pcm.size && !closed && generation.get() == request) {
-                    val count = built.write(
-                        pcm, written, minOf(4096, pcm.size - written), AudioTrack.WRITE_BLOCKING,
-                    )
+                    // API 19 无 WRITE_BLOCKING（API 21），MODE_STREAM 下 write 本身即阻塞语义
+                    val count = built.write(pcm, written, minOf(4096, pcm.size - written))
                     check(count > 0) { "Could not write preview tone" }
                     written += count
                 }

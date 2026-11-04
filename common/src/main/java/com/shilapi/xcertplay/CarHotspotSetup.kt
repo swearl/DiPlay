@@ -19,10 +19,10 @@ internal object CarHotspotSetup {
     enum class Permission(val appOp: String) {
         HOTSPOT("WRITE_SETTINGS"), BOOT_LAUNCH("SYSTEM_ALERT_WINDOW");
 
-        fun granted(context: Context): Boolean = when (this) {
-            HOTSPOT -> Settings.System.canWrite(context)
-            BOOT_LAUNCH -> Settings.canDrawOverlays(context)
-        }
+        // API 19 无 Settings.System.canWrite / Settings.canDrawOverlays（API 23/24）：
+        // targetSdk 19 下 WRITE_SETTINGS / SYSTEM_ALERT_WINDOW 安装时即授予，直接视为已授权
+        @Suppress("UNUSED_PARAMETER")
+        fun granted(context: Context): Boolean = true
     }
 
     fun check(context: Context, adb: LocalAdb = LocalAdb(AdbKeys.load(context))): LocalAdb.Access = adb.use {

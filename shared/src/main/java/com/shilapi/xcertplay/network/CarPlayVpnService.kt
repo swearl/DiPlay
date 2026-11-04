@@ -103,10 +103,9 @@ class CarPlayVpnService : VpnService() {
                 .addRoute(LINK_LOCAL_ROUTE, LINK_PREFIX)
                 .setSession(SESSION_NAME)
                 .setMtu(TUN_MTU)
-                .setBlocking(true)
-                // An empty app list routes every UID through this VPN. Scope it before establish;
-                // rejection must reach the existing attachment cleanup, never an unscoped retry.
-                .addAllowedApplication(packageName)
+                // 精简移植：setBlocking 为 API 33+（Builder 默认即阻塞式）、addAllowedApplication
+                // 为 API 21+，API 19 均不可用。删除后隧道按默认阻塞式运行，且为全局路由，
+                // 无法按应用分流。
                 .establish()
                 ?: throw IOException("VpnService.establish returned null")
             tun = tunFd
@@ -233,7 +232,7 @@ class CarPlayVpnService : VpnService() {
         attachment = replacement.copy(config = replacement.config.copy(port = server.localPort))
         serverSocket = server
         additionalServers = servers.drop(1)
-        servers.forEach { bound ->
+        for (bound in servers) {
             runCatching { replacement.listener.onDebugLog(
                 "airplay listener ready family=${if (bound.inetAddress is Inet6Address) "IPv6" else "IPv4"} port=${bound.localPort}",
             ) }
@@ -330,7 +329,7 @@ class CarPlayVpnService : VpnService() {
 
     private fun closeSessionsLocked() {
         synchronized(sessionsLock) {
-            sessions.toList().forEach { session ->
+            for (session in sessions.toList()) {
                 try {
                     session.close()
                 } catch (error: Exception) {
@@ -374,7 +373,7 @@ class CarPlayVpnService : VpnService() {
         attachment = null
         serverSocket?.close()
         serverSocket = null
-        additionalServers.forEach { it.close() }
+        for (server in additionalServers) server.close()
         additionalServers = emptyList()
         closeSessionsLocked()
         bridge?.close()

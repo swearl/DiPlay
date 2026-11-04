@@ -1,4 +1,4 @@
-package com.shilapi.xcertplay.network
+﻿package com.shilapi.xcertplay.network
 
 import android.content.Context
 import android.net.wifi.WifiConfiguration
@@ -45,7 +45,7 @@ object CarHotspotConfigRead {
     }
 
     private fun readWithApp(context: Context, log: (String) -> Unit): Outcome {
-        val wifi = context.applicationContext.getSystemService(WifiManager::class.java)
+        val wifi = (context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager)
             ?: return Outcome(reason = Reason.UNAVAILABLE).also { log("car hotspot config: no Wi-Fi manager") }
         val managerType = WifiManager::class.java
         return readApp({ managerType.getMethod("getWifiApConfiguration").invoke(wifi) as? WifiConfiguration }, log)

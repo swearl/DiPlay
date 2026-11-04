@@ -1,4 +1,4 @@
-package com.shilapi.xcertplay.orchestration
+﻿package com.shilapi.xcertplay.orchestration
 
 import android.Manifest
 import android.bluetooth.BluetoothAdapter
@@ -173,9 +173,9 @@ class CarPlayController(
     private val appContext = context.applicationContext
     private val diagnosticAttempt = diagnosticAttempts.incrementAndGet()
     private val diagnosticRun = AtomicInteger()
-    private val usbManager: UsbManager? = context.getSystemService(UsbManager::class.java)
+    private val usbManager: UsbManager? = (context.getSystemService(Context.USB_SERVICE) as? UsbManager)
     private fun currentBluetoothAdapter(): BluetoothAdapter? =
-        runCatching { appContext.getSystemService(BluetoothManager::class.java)?.adapter }
+        runCatching { (appContext.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter }
             .getOrNull() ?: runCatching { BluetoothAdapter.getDefaultAdapter() }.getOrNull()
 
     private fun awaitBluetoothEnabled(adapter: BluetoothAdapter, timeoutMillis: Long = 3_000L): Boolean {
@@ -893,7 +893,8 @@ class CarPlayController(
         phase = Phase.MFI
         onStatus(CarPlayStatus.DiscoveringMfi)
         // 精简移植：MFI 目标只保留 LOCAL（本地离线签名身份）
-        val offlineDirectory = java.io.File(appContext.noBackupFilesDir, LocalMfiAuthenticationClient.DIRECTORY)
+        // 精简移植：noBackupFilesDir 为 API 21+，API 19 无自动备份机制，行为等价使用 filesDir
+        val offlineDirectory = java.io.File(appContext.filesDir, LocalMfiAuthenticationClient.DIRECTORY)
         openLocalMfi(offlineDirectory)
     }
 
@@ -1732,8 +1733,9 @@ class CarPlayController(
                             sessionAlreadyStarted = sessionAlreadyStarted,
                         )
                         connectionDiagnostic(
-                            "USB configuration ready=${configuration != null} " +
-                                "configurationId=${configuration?.id ?: "none"} " +
+                            // 精简移植：API 19 无 configuration 概念，诊断改用顶层 interface 描述
+                            "USB interfaces ready=${configuration != null} " +
+                                "interfaces=${configuration?.let(IphoneCarPlayConfiguration::describe) ?: "none"} " +
                                 "reenumerationAttempts=$reenumerationAttempts " +
                                 (if (sessionAlreadyStarted && carPlayMode) "previousSessionOnThisEnumeration=true " else "") +
                                 "action=${action.diagnostic}",
@@ -1894,15 +1896,17 @@ class CarPlayController(
     }
 
     private fun openNcm(device: UsbDevice): NcmUsbBridge {
-        val configuration = IphoneCarPlayConfiguration.find(device)
+        // 精简移植：API 19 无 configuration 概念，find 直接在设备顶层 interface 上识别 CarPlay 功能
+        IphoneCarPlayConfiguration.find(device)
             ?: throw IphoneUsbException.Protocol(
-                "iPhone exposes no CarPlay configuration for NCM",
+                "iPhone exposes no CarPlay USB interfaces for NCM",
             )
-        val function = NcmFunctionDiscovery.find(configuration)
-            ?: throw IphoneUsbException.Protocol("iPhone configuration does not expose an NCM function")
+        val function = NcmFunctionDiscovery.find(device)
+            ?: throw IphoneUsbException.Protocol("iPhone does not expose an NCM function")
         debugLog(
-            "ncm config=${configuration.id} control=${function.control.id}/${function.control.alternateSetting}" +
-                " data=${function.data.id}/${function.data.alternateSetting}" +
+            // 精简移植：API 19 无 configuration/alternateSetting 概念，日志只保留接口编号
+            "ncm control=${function.control.id}" +
+                " data=${function.data.id}" +
                 " status=${function.statusIn?.address?.let { "0x${it.toString(16)}" } ?: "none"}" +
                 " in=0x${function.bulkIn.address.toString(16)} out=0x${function.bulkOut.address.toString(16)}",
         )
@@ -2701,9 +2705,10 @@ class CarPlayController(
     }
 
     private fun closeReceivers() {
-        listOfNotNull(permissionCloseable, attachCloseable).forEach {
+        // 精简移植：Iterable#forEach 为 API 24 默认方法，改用 for 循环
+        for (closeable in listOfNotNull(permissionCloseable, attachCloseable)) {
             try {
-                it.close()
+                closeable.close()
             } catch (_: Exception) {
                 // Receiver is already unregistered.
             }

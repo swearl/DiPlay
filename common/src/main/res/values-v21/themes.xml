@@ -1,0 +1,26 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- API 21+ 才支持 Material 主题与状态栏/导航栏着色，v21 覆盖保持原有外观；
+         更高版本属性带 tools:targetApi 标注，低版本自动忽略 -->
+    <style name="Theme.Xcertplay" parent="android:Theme.Material.NoActionBar">
+        <item name="android:colorAccent">#A6C8FF</item>
+        <item name="android:windowLightStatusBar" tools:targetApi="23">false</item>
+        <item name="android:navigationBarColor">#0C111B</item>
+        <item name="android:statusBarColor">#0C111B</item>
+        <!-- Without it, API 31+ draws a white splash before the dark Home screen. -->
+        <item name="android:windowSplashScreenBackground" tools:targetApi="31">#0C111B</item>
+    </style>
+    <style name="Theme.Xcertplay.Light">
+        <item name="android:colorAccent">#245A9C</item>
+        <item name="android:windowLightStatusBar" tools:targetApi="23">true</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="27">true</item>
+        <item name="android:navigationBarColor">#E9EEF6</item>
+        <item name="android:statusBarColor">#E9EEF6</item>
+        <item name="android:windowSplashScreenBackground" tools:targetApi="31">#E9EEF6</item>
+    </style>
+    <style name="Theme.Xcertplay.Dialog.Dark" parent="android:Theme.Material.Dialog.Alert">
+        <item name="android:colorAccent">#A6C8FF</item>
+    </style>
+    <style name="Theme.Xcertplay.Dialog.Light" parent="android:Theme.Material.Light.Dialog.Alert">
+        <item name="android:colorAccent">#245A9C</item>
+    </style>
+</resources>

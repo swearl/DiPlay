@@ -239,7 +239,8 @@ class LockdownPlistChannel(
                     throw IphoneUsbException.Protocol("Lockdown plist dictionary exceeds $MAXIMUM_DICTIONARY_ENTRIES entries")
                 }
                 append("<dict>")
-                value.entries.forEach { (key, entryValue) ->
+                // 精简移植：Iterable#forEach 为 API 24 默认方法，改用 for 循环
+                for ((key, entryValue) in value.entries) {
                     append("<key>").appendEscaped(key).append("</key>")
                     appendValue(entryValue, depth + 1)
                 }

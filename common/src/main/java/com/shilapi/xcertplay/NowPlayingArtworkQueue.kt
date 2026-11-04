@@ -39,7 +39,7 @@ internal class NowPlayingArtworkQueue<Image : Any>(
     private fun clearLocked() {
         owner = null
         pending.clear()
-        ready.values.forEach { it.image?.let(discard) }
+        for (value in ready.values) value.image?.let(discard)
         ready.clear()
     }
 
