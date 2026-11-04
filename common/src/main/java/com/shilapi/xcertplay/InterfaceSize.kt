@@ -39,8 +39,8 @@ object InterfaceSize {
 
     /**
      * The override for [base], or null when the interface stays at its system size. It carries [base]'s
-     * locales: before Android 13 the app language lives in the wrapped base context, and an override
-     * without them falls back to the system language.
+     * locale: the app language lives in the wrapped base context, and an override without it falls back
+     * to the system language.
      */
     internal fun override(base: Configuration, choice: Int): Configuration? {
         val scale = scale(choice, base.smallestScreenWidthDp)
@@ -50,8 +50,11 @@ object InterfaceSize {
             screenWidthDp = (base.screenWidthDp / scale).roundToInt()
             screenHeightDp = (base.screenHeightDp / scale).roundToInt()
             smallestScreenWidthDp = (base.smallestScreenWidthDp / scale).roundToInt()
-            setLocales(base.locales)
-            setLayoutDirection(base.locales[0])
+            // API 19 没有 LocaleList（getLocales/setLocales 为 API 24 新增），
+            // 应用语言已由 AppLocale.wrap 写入 base configuration 的 locale，直接沿用即可。
+            @Suppress("DEPRECATION")
+            locale = base.locale
+            setLayoutDirection(base.locale)
         }
     }
 
@@ -62,8 +65,10 @@ object InterfaceSize {
      */
     internal fun contextOverride(scaled: Configuration): Configuration = Configuration().apply {
         densityDpi = scaled.densityDpi
-        setLocales(scaled.locales)
-        setLayoutDirection(scaled.locales[0])
+        // 同 override：API 19 用单一 locale 字段承载语言信息。
+        @Suppress("DEPRECATION")
+        locale = scaled.locale
+        setLayoutDirection(scaled.locale)
     }
 
     /** Applies the density override for [base] to [activity]; call from attachBaseContext. */
