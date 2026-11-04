@@ -1,0 +1,6 @@
+# 构建产物与本地配置不入库
+.gradle/
+build/
+local.properties
+*.iml
+.idea/

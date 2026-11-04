@@ -1,0 +1,54 @@
+package com.shilapi.xcertplay.mfi
+
+// 精简移植：MFI 只保留 LOCAL（本地离线签名）。
+// 删除了依赖 I2cTransport 的寄存器客户端 MfiAuthenticationClient（仅 USB_CH341/I2C 目标使用），
+// 保留证书类型、BAA 证书对、MfiAuthenticator 契约与异常体系，供 LocalMfi / Iap2Mfi 客户端使用。
+
+enum class MfiCertificateType {
+    MFI,
+    BAA,
+}
+
+class BaaCertificatePair(leaf: ByteArray, intermediate: ByteArray) {
+    val leaf: ByteArray = leaf.copyOf()
+    val intermediate: ByteArray = intermediate.copyOf()
+
+    init {
+        require(this.leaf.isNotEmpty()) { "BAA leaf certificate must not be empty" }
+        require(this.intermediate.isNotEmpty()) { "BAA intermediate certificate must not be empty" }
+    }
+}
+
+/** Common certificate/signing contract implemented by local coprocessors and remote services. */
+interface MfiAuthenticator {
+    val certificateType: MfiCertificateType
+        get() = MfiCertificateType.MFI
+
+    fun protocolMajor(): Int
+
+    fun readCertificate(
+        maximumOutputLength: Int = DEFAULT_MAXIMUM_CERTIFICATE_OUTPUT_LENGTH,
+    ): ByteArray
+
+    fun signChallenge(challenge: ByteArray): ByteArray
+
+    fun baaCertificates(): BaaCertificatePair =
+        throw MfiInvalidDataException("Authenticator does not provide BAA certificates")
+
+    companion object {
+        const val DEFAULT_MAXIMUM_CERTIFICATE_OUTPUT_LENGTH = 65_525
+    }
+}
+
+/** MFi-layer failures that are distinct from transport errors. */
+sealed class MfiException(message: String, cause: Throwable? = null) : Exception(message, cause)
+
+class MfiInvalidDataException(message: String, cause: Throwable? = null) : MfiException(message, cause)
+
+/** The chip did not complete an authentication request; [errorCode] is best-effort only. */
+class MfiAuthenticationFailedException(val errorCode: Int?, cause: Throwable? = null) :
+    MfiException(
+        if (errorCode == null) "MFi authentication failed (error code unavailable)"
+        else "MFi authentication failed with error 0x${errorCode.toString(16)}",
+        cause,
+    )

@@ -1,0 +1,13 @@
+[versions]
+agp = "8.4.2"
+kotlin = "2.2.10"
+
+[libraries]
+# 纯 Java 依赖，无 androidx，可在 API 19 直接使用
+bouncycastle = { module = "org.bouncycastle:bcprov-jdk15on", version = "1.70" }
+jmdns = { module = "org.jmdns:jmdns", version = "3.5.1" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+android-library = { id = "com.android.library", version.ref = "agp" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }

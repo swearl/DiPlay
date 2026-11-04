@@ -1,0 +1,55 @@
+plugins {
+    id 'com.android.library'
+    alias(libs.plugins.kotlin.android)
+}
+
+android {
+    namespace = 'com.shilapi.xcertplay.shared'
+    compileSdk = 34
+
+    defaultConfig {
+        minSdk = 19
+
+        ndk {
+            // 仅编译 armeabi-v7a
+            abiFilters 'armeabi-v7a'
+        }
+
+        externalNativeBuild {
+            ndkBuild {
+                arguments 'APP_PLATFORM=android-19'
+            }
+        }
+    }
+
+    // NDK r28 最低仅支持 API 21，改用支持 API 19 的 NDK r25
+    ndkVersion = '25.2.9519653'
+    externalNativeBuild {
+        ndkBuild {
+            path = file('src/main/jni/Android.mk')
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_1_8
+        targetCompatibility = JavaVersion.VERSION_1_8
+    }
+
+    lint {
+        abortOnError = false
+        checkReleaseBuilds = false
+    }
+}
+
+// Kotlin 编译目标锁定 JVM 1.8（与 Java compileOptions 一致，API 19 运行时兼容）
+kotlin {
+    compilerOptions {
+        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_1_8
+    }
+}
+
+dependencies {
+    // 仅保留纯 Java 依赖（无 androidx）
+    implementation libs.bouncycastle
+    implementation libs.jmdns
+}
