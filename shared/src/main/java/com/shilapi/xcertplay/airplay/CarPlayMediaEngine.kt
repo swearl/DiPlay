@@ -459,7 +459,8 @@ class CarPlayMediaEngine(
             shared, "DataStream-Salt$seed".toByteArray(Charsets.US_ASCII), label.toByteArray(Charsets.US_ASCII), 32,
         )
         val channel = VideoSettingsChannel(key(DATASTREAM_OUTPUT_KEY), key(DATASTREAM_INPUT_KEY), peer) { session.logDebug(it) }
-        val port = channel.listen(session.localAddress ?: InetAddress.getByName("::"))
+        // Android 4.4 绑定 IPv6 通配地址「::」会抛 SocketException，回退时改用 IPv4 通配地址
+        val port = channel.listen(session.localAddress ?: InetAddress.getByName("0.0.0.0"))
         videoSettingsChannels.put(session, channel)?.close()
         session.logTrace("video settings stream listening port=$port")
         return linkedMapOf<String, Any?>("type" to STREAM_TYPE_DATA, "streamID" to VIDEO_SETTINGS_STREAM_ID, "dataPort" to port)

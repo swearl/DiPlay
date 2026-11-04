@@ -38,9 +38,9 @@ class NtpClock : Closeable {
 
     fun listen(): Int {
         check(!running.getAndSet(true)) { "NtpClock is already running" }
+        // Android 4.4 绑定 IPv6 通配地址「::」会抛 SocketException，改用 WildcardBind 回退绑定
         val bound = DatagramSocket(null)
-        bound.reuseAddress = true
-        bound.bind(InetSocketAddress(InetAddress.getByName("::"), 0))
+        WildcardBind.bindUdp(bound)
         synchronized(socketLock) { socket = bound }
         receiver = Thread(::runReceiver, "airplay-ntp-rx").apply { isDaemon = true; start() }
         return bound.localPort

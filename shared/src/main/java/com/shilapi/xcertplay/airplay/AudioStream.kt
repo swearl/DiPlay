@@ -190,9 +190,9 @@ class AudioStream(
     }
 
     private fun bindAnyPort(): DatagramSocket {
+        // Android 4.4 绑定 IPv6 通配地址「::」会抛 SocketException，改用 WildcardBind 回退绑定
         val socket = DatagramSocket(null)
-        socket.reuseAddress = true
-        socket.bind(InetSocketAddress(InetAddress.getByName("::"), 0))
+        WildcardBind.bindUdp(socket)
         return socket
     }
 

@@ -12,6 +12,7 @@ import com.shilapi.xcertplay.airplay.AudioCodecKind
 import com.shilapi.xcertplay.airplay.MicrophoneConfig
 import com.shilapi.xcertplay.airplay.MicrophoneCounters
 import com.shilapi.xcertplay.airplay.MicrophonePacketizer
+import com.shilapi.xcertplay.airplay.WildcardBind
 import java.io.Closeable
 import java.net.DatagramPacket
 import java.net.DatagramSocket
@@ -119,10 +120,8 @@ internal class MicrophoneUplink(
         }
 
         val nextSocket = try {
-            DatagramSocket(null).apply {
-                reuseAddress = true
-                bind(InetSocketAddress(InetAddress.getByName("::"), 0))
-            }
+            // Android 4.4 绑定 IPv6 通配地址「::」会抛 SocketException，改用 WildcardBind 回退绑定
+            DatagramSocket(null).apply { WildcardBind.bindUdp(this) }
         } catch (error: Exception) {
             Log.e(TAG, "microphone socket creation failed", error)
             stats.failure(MicrophoneFailureStage.SOCKET_CREATION, error)
