@@ -375,8 +375,7 @@ object SettingsWidgets {
         val seekBar = SeekBar(context).apply {
             max = CarPlayDisplayScale.MAX_PERCENT - CarPlayDisplayScale.MIN_PERCENT
             progress = initial - CarPlayDisplayScale.MIN_PERCENT
-            splitTrack = false
-            // API 19 无 progress/thumbTintList（API 21），进度条使用系统默认配色
+            // API 19 无 splitTrack/progress/thumbTintList（均 API 21），使用系统默认样式
             setOnSeekBarChangeListener(
                 object : SeekBar.OnSeekBarChangeListener {
                     override fun onProgressChanged(sb: SeekBar, progress: Int, fromUser: Boolean) {

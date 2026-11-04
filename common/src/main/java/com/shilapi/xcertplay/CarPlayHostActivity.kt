@@ -3615,8 +3615,7 @@ open class CarPlayHostActivity : Activity() {
         val seekBar = SeekBar(this).apply {
             max = (values.size - 1).coerceAtLeast(0)
             progress = selectedIndex
-            splitTrack = false
-            // 精简移植：progress/thumbTintList 为 API 21+，进度条使用系统默认配色
+            // 精简移植：splitTrack/progress/thumbTintList 均为 API 21+，使用系统默认样式
             setOnSeekBarChangeListener(
                 object : SeekBar.OnSeekBarChangeListener {
                     override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
