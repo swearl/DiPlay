@@ -846,7 +846,8 @@ open class CarPlayHostActivity : Activity() {
             finish(); return
         }
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        getSystemService(android.hardware.display.DisplayManager::class.java)
+        // 精简移植：getSystemService(Class) 为 API 23+，改用字符串常量（API 19 兼容）。
+        (getSystemService(Context.DISPLAY_SERVICE) as? android.hardware.display.DisplayManager)
             ?.registerDisplayListener(clusterDisplayListener, mainHandler)
         initializeSessionLog()
         lastConfiguration = Configuration(resources.configuration)
@@ -1909,7 +1910,8 @@ open class CarPlayHostActivity : Activity() {
         delayedDoubleSiri = null
         AirPlayPersistence.overlaySettingsListener = null
         clusterMonitor?.stop()
-        getSystemService(android.hardware.display.DisplayManager::class.java)
+        // 精简移植：getSystemService(Class) 为 API 23+，改用字符串常量（API 19 兼容）。
+        (getSystemService(Context.DISPLAY_SERVICE) as? android.hardware.display.DisplayManager)
             ?.unregisterDisplayListener(clusterDisplayListener)
         mainHandler.removeCallbacks(hideIdleCenterMap)
         mainHandler.removeCallbacks(releaseIdleCluster)
@@ -4772,7 +4774,8 @@ open class CarPlayHostActivity : Activity() {
     /** Car Bluetooth audio: shows whether the iPhone keeps A2DP/HFP with the car now and once CarPlay runs. */
     private fun logCarBluetoothAudio() {
         appendLog("Car Bluetooth audio: on; CarPlay audio not offered")
-        val adapter = runCatching { getSystemService(android.bluetooth.BluetoothManager::class.java)?.adapter ?: android.bluetooth.BluetoothAdapter.getDefaultAdapter() }.getOrNull()
+        // 精简移植：getSystemService(Class) 为 API 23+，改用字符串常量（API 19 兼容）。
+        val adapter = runCatching { (getSystemService(Context.BLUETOOTH_SERVICE) as? android.bluetooth.BluetoothManager)?.adapter ?: android.bluetooth.BluetoothAdapter.getDefaultAdapter() }.getOrNull()
             ?: return appendLog("Car Bluetooth audio: no Bluetooth adapter")
         fun probe(moment: String) {
             for ((name, profile) in listOf("A2DP" to android.bluetooth.BluetoothProfile.A2DP,

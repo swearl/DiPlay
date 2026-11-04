@@ -5,7 +5,6 @@ import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
-import android.graphics.drawable.InsetDrawable
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -21,6 +20,44 @@ import com.shilapi.xcertplay.host.R
 import kotlin.math.roundToInt
 
 object SettingsWidgets {
+
+    /**
+     * 圆形滑块 Drawable：按 bounds 的短边在中心绘制正圆。
+     * API 19 的 Switch 会把 thumb 的 bounds 拉伸到整个开关高度，
+     * GradientDrawable(OVAL) 填满 bounds 会变成椭圆，此实现保证任意拉伸下始终为圆。
+     */
+    private class CircleThumbDrawable(private val color: Int, private val density: Float) : android.graphics.drawable.Drawable() {
+        private val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+        private var alphaValue = 255
+
+        override fun draw(canvas: android.graphics.Canvas) {
+            val w = bounds.width().toFloat()
+            val h = bounds.height().toFloat()
+            if (w <= 0f || h <= 0f) return
+            paint.color = color
+            paint.alpha = alphaValue
+            // 取短边的一半作为半径，在 bounds 中心画正圆
+            val radius = minOf(w, h) / 2f
+            canvas.drawCircle(bounds.exactCenterX(), bounds.exactCenterY(), radius, paint)
+        }
+
+        override fun setAlpha(alpha: Int) {
+            alphaValue = alpha
+            invalidateSelf()
+        }
+
+        override fun setColorFilter(colorFilter: android.graphics.ColorFilter?) {
+            paint.colorFilter = colorFilter
+        }
+
+        @Deprecated("Deprecated in Java")
+        override fun getOpacity(): Int = android.graphics.PixelFormat.TRANSLUCENT
+
+        // 提供与原方案一致的固有尺寸（28dp），供 Switch 测量定位
+        override fun getIntrinsicWidth(): Int = (28 * density).toInt()
+
+        override fun getIntrinsicHeight(): Int = (28 * density).toInt()
+    }
 
     private fun TextView.applyTextStyle(context: Context, theme: SettingsTheme, bold: Boolean = false) {
         if (theme.isOverlay) {
@@ -67,36 +104,15 @@ object SettingsWidgets {
     fun applyLargeSwitchStyle(switch: Switch, thumbOn: Int, thumbOff: Int, trackOn: Int, trackOff: Int) {
         val density = switch.resources.displayMetrics.density
         fun px(value: Int) = (value * density).roundToInt()
-        // Switch stretches the thumb to the full track height, so the inset keeps a margin around it.
-        val thumbInset = px(3)
-        switch.thumbDrawable = InsetDrawable(
-            GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setSize(px(28), px(28))
-                setColor(Color.WHITE)
-            },
-            thumbInset,
-        )
-        switch.trackDrawable = GradientDrawable().apply {
-            cornerRadius = px(17).toFloat()
-            setSize(px(60), px(34))
-            setColor(Color.WHITE)
-            // Same 30% track as the platform switch, so the colours match the smaller switches.
-            alpha = (0.3f * 255).roundToInt()
-        }
-        switch.switchMinWidth = px(60)
-        // API 19 无 showText（API 23）与 thumb/trackTintList（API 21）：
-        // 用状态绘制的 StateListDrawable 代替着色，保持开关三态颜色一致
-        fun thumb(color: Int) = InsetDrawable(GradientDrawable().apply {
-            shape = GradientDrawable.OVAL
-            setSize(px(28), px(28))
-            setColor(color)
-        }, thumbInset)
+        // API 19 的 Switch 会把 thumb 的 bounds 拉伸到整个开关高度，
+        // GradientDrawable(OVAL) 填满 bounds 会变成椭圆，改用按短边画正圆的自定义 Drawable。
         switch.thumbDrawable = android.graphics.drawable.StateListDrawable().apply {
+            fun thumb(color: Int) = CircleThumbDrawable(color, density)
             addState(intArrayOf(-android.R.attr.state_enabled), thumb(ColorBlend.setAlphaComponent(thumbOff, 0x61)))
             addState(intArrayOf(android.R.attr.state_checked), thumb(thumbOn))
             addState(intArrayOf(), thumb(thumbOff))
         }
+        switch.switchMinWidth = px(60)
         fun track(color: Int) = GradientDrawable().apply {
             cornerRadius = px(17).toFloat()
             setSize(px(60), px(34))
