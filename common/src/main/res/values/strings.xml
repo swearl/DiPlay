@@ -217,7 +217,6 @@
     <string name="finish_setup_save_your_hotspot_details_to_use_this_mode">Finish setup · Save your hotspot details to use this mode.</string>
     <string name="follow_instrument_theme_and_map_card">Follow instrument theme and map card</string>
     <string name="frame_rate">Frame rate</string>
-    <string name="full_screen">Full screen</string>
     <string name="adapt_pip_resolution">Adapt multi-window resolution</string>
     <string name="adapt_pip_resolution_description">Reconnect CarPlay to adapt stream resolution to multi-window or picture-in-picture aspect ratio. Leave disabled for instant 0ms GPU scaling.</string>
     <string name="fullscreen">Fullscreen</string>
@@ -405,7 +404,6 @@
     <string name="settings_wheel_keys">Wheel keys</string>
     <string name="settings_experimental_display">Display (experimental)</string>
     <string name="settings_diagnostics_summary">Save a local report when troubleshooting a connection</string>
-    <string name="settings_full_screen_description">Hide the status and navigation bars in DiPlay and CarPlay.</string>
     <string name="settings_vehicle_description">Vehicle and dashboard features vary by model and firmware. Review them in Advanced settings before enabling experimental controls.</string>
     <string name="settings_open_advanced">Open Advanced settings</string>
     <string name="setup_needs_attention">Setup needs attention</string>

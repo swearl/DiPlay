@@ -210,7 +210,6 @@
     <string name="finish_setup_save_your_hotspot_details_to_use_this_mode">完成設定 · 儲存熱點資訊以使用此模式。</string>
     <string name="follow_instrument_theme_and_map_card">跟隨儀表板主題和地圖卡片</string>
     <string name="frame_rate">影格率</string>
-    <string name="full_screen">全螢幕顯示</string>
     <string name="adapt_pip_resolution">畫中畫與分割畫面自適應</string>
     <string name="adapt_pip_resolution_description">重新連線 CarPlay，讓串流解析度適應多視窗或畫中畫的長寬比。保持關閉時，使用 GPU 即時縮放，不需重新連線。</string>
     <string name="fullscreen">全螢幕</string>

@@ -489,17 +489,27 @@ class DiPlayActivity : Activity(), AppAppearanceOwner {
 
     private fun applyFullscreenMode() {
         // 精简移植：API 19 没有 WindowInsetsController，改用经典 systemUiVisibility。
-        var flags = window.decorView.systemUiVisibility or
-            View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
+        // 先清掉旧的布局/隐藏标志再按当前设置写入：有系统栏显示时不写任何 LAYOUT
+        // 标志，让窗口正常让位，否则窗口仍铺满全屏，界面会被状态栏/导航栏压住。
+        val layoutFlags = View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
             View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
             View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-        if (AirPlayPersistence.loadHideTopBar(this)) {
-            flags = flags or View.SYSTEM_UI_FLAG_FULLSCREEN
+        val hideFlags = View.SYSTEM_UI_FLAG_FULLSCREEN or
+            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
+            View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+        val hideTop = AirPlayPersistence.loadHideTopBar(this)
+        val hideBottom = AirPlayPersistence.loadHideBottomBar(this)
+        val decor = window.decorView
+        var flags = decor.systemUiVisibility and (layoutFlags or hideFlags).inv()
+        if (hideTop && hideBottom) {
+            // 顶部与底部都隐藏：内容延伸到系统栏区域，手势短暂呼出（sticky immersive）
+            flags = flags or layoutFlags or hideFlags
+        } else if (hideTop) {
+            flags = flags or View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+        } else if (hideBottom) {
+            flags = flags or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
         }
-        if (AirPlayPersistence.loadHideBottomBar(this)) {
-            flags = flags or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-        }
-        window.decorView.systemUiVisibility = flags
+        decor.systemUiVisibility = flags
     }
 
     private val isNaturallyExpandedSettingsLayout: Boolean
@@ -1151,12 +1161,6 @@ class DiPlayActivity : Activity(), AppAppearanceOwner {
             getString(R.string.default_connection_description),
             DiPlayPreferences.autoConnect(this@DiPlayActivity)) { DiPlayPreferences.saveAutoConnect(this@DiPlayActivity, it) }
         appearanceControl(this)
-        toggle(this, getString(R.string.full_screen), getString(R.string.settings_full_screen_description),
-            AirPlayPersistence.loadHideTopBar(this@DiPlayActivity) && AirPlayPersistence.loadHideBottomBar(this@DiPlayActivity)) { enabled ->
-            AirPlayPersistence.saveHideTopBar(this@DiPlayActivity, enabled)
-            AirPlayPersistence.saveHideBottomBar(this@DiPlayActivity, enabled)
-            applyFullscreenMode()
-        }
         toggle(this, getString(R.string.report_location_to_iphone),
             "${getString(R.string.location_reporting_reconnects)} ${getString(R.string.sends_precise_android_location_as_carplay_gps_data_when_th)}",
             AirPlayPersistence.loadLocationReportingEnabled(this@DiPlayActivity), save = ::onLocationReportingChanged)

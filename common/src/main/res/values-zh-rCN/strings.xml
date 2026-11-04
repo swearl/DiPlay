@@ -211,7 +211,6 @@
     <string name="finish_setup_save_your_hotspot_details_to_use_this_mode">完成设置 · 保存热点信息以使用此模式。</string>
     <string name="follow_instrument_theme_and_map_card">跟随仪表盘主题和地图卡片</string>
     <string name="frame_rate">帧率</string>
-    <string name="full_screen">全屏显示</string>
     <string name="adapt_pip_resolution">画中画与分屏自适应</string>
     <string name="adapt_pip_resolution_description">切换至桌面画中画或分屏悬浮小窗口时，自动断开重连以适应窗口分辨率，消除上下左右黑边。保持关闭可实现 0 毫秒 GPU 秒级自适应且不重连。</string>
     <string name="fullscreen">全屏</string>

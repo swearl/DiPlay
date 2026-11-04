@@ -25,7 +25,6 @@
     <string name="settings_wheel_keys">方向盤按鍵</string>
     <string name="settings_experimental_display">顯示（實驗性）</string>
     <string name="settings_diagnostics_summary">排除連線問題時儲存本機報告</string>
-    <string name="settings_full_screen_description">在 DiPlay 與 CarPlay 中隱藏狀態列及導覽列。</string>
     <string name="settings_vehicle_description">車輛和儀表板功能因車型和韌體而異。啟用實驗性設定前，請先在進階設定中查看。</string>
     <string name="settings_open_advanced">開啟進階設定</string>
     <string name="settings_reconnect_pending">已儲存。部分變更將在 CarPlay 重新連線後生效。</string>
