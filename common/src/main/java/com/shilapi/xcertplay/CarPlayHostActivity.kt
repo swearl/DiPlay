@@ -2764,8 +2764,7 @@ open class CarPlayHostActivity : Activity() {
         }
         val panel = FrameLayout(this).apply {
             background = swipeMenuChrome()
-            clipToOutline = true
-            // API 19 无 View.setElevation（API 21），层级降级
+            // API 19 无 setClipToOutline/View.setElevation（均 API 21），圆角裁剪与悬浮层级降级
         }
         val categories = listOf(
             "connection" to R.string.connection,

@@ -4487,7 +4487,7 @@ class DiPlayActivity : Activity(), AppAppearanceOwner {
             setImageBitmap(custom ?: BitmapFactory.decodeResource(resources, R.raw.ic_car_home))
             scaleType = ImageView.ScaleType.CENTER_CROP
             background = rounded(SURFACE, BORDER)
-            clipToOutline = true
+            // API 19 无 View.setClipToOutline（API 21），圆角裁剪降级；background 自带圆角描边，视觉损失很小
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         }, LinearLayout.LayoutParams(dp(72), dp(72)).apply { marginEnd = dp(16) })
         val text = column()

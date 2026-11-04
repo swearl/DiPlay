@@ -112,10 +112,11 @@ object SettingsWidgets {
             addState(intArrayOf(android.R.attr.state_checked), thumb(thumbOn))
             addState(intArrayOf(), thumb(thumbOff))
         }
-        switch.switchMinWidth = px(60)
+        // 轨道宽度为滑块直径（28dp）的 2 倍
+        switch.switchMinWidth = px(56)
         fun track(color: Int) = GradientDrawable().apply {
             cornerRadius = px(17).toFloat()
-            setSize(px(60), px(34))
+            setSize(px(56), px(34))
             setColor(color)
         }
         switch.trackDrawable = android.graphics.drawable.StateListDrawable().apply {
