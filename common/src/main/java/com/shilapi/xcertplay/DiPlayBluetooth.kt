@@ -1,17 +1,14 @@
 package com.shilapi.xcertplay
 
-import android.bluetooth.BluetoothAdapter
-import android.bluetooth.BluetoothManager
 import android.content.Context
-import android.provider.Settings
+import com.shilapi.xcertplay.bluetooth.CarPlayBluetoothAdapterFactory
 
 internal object DiPlayBluetooth {
-    fun localAddress(context: Context): String? {
-        val adapter = runCatching { ((context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter ?: BluetoothAdapter.getDefaultAdapter())?.address }.getOrNull()
-        val setting = runCatching { Settings.Secure.getString(context.contentResolver, "bluetooth_address") }.getOrNull()
-        return listOfNotNull(adapter, setting).firstOrNull {
-            Regex("(?i)([0-9a-f]{2}:){5}[0-9a-f]{2}").matches(it) &&
-                !it.startsWith("02:00:00:00:00:") && it != "00:00:00:00:00:00"
-        }
-    }
+    /**
+     * 本机蓝牙 MAC：按设备能力自动选择来源——通用蓝牙模块读原生协议栈
+     * （含 Settings.Secure 兜底），HSAE 第三方蓝牙模块读 BtPhoneProxy。
+     * 取不到时返回 null，由调用方决定回退值。
+     */
+    fun localAddress(context: Context): String? =
+        CarPlayBluetoothAdapterFactory.create(context.applicationContext).localAddress()
 }

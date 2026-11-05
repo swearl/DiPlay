@@ -102,6 +102,8 @@ import com.shilapi.xcertplay.orchestration.ManualHotspotSecurity
 import com.shilapi.xcertplay.orchestration.MfiTarget
 import com.shilapi.xcertplay.orchestration.WirelessHotspotMode
 import com.shilapi.xcertplay.orchestration.isManualHotspotChannelCompatible
+import com.shilapi.xcertplay.bluetooth.CarPlayBluetoothAdapterFactory
+import com.shilapi.xcertplay.bluetooth.HsaeBluetoothAdapter
 import com.shilapi.xcertplay.settings.ConnectionSettingsSection
 import com.shilapi.xcertplay.settings.DisplaySettingsSection
 import com.shilapi.xcertplay.settings.SettingsTheme
@@ -4769,6 +4771,18 @@ open class CarPlayHostActivity : Activity() {
     /** Car Bluetooth audio: shows whether the iPhone keeps A2DP/HFP with the car now and once CarPlay runs. */
     private fun logCarBluetoothAudio() {
         appendLog("Car Bluetooth audio: on; CarPlay audio not offered")
+        // 精简移植：HSAE 第三方蓝牙模块无原生 profile 代理，改读其配对设备连接状态。
+        val hsae = CarPlayBluetoothAdapterFactory.create(this) as? HsaeBluetoothAdapter
+        if (hsae != null) {
+            val selected = DiPlayPreferences.phoneAddress(this)
+            val probe: () -> Unit = {
+                val phone = hsae.pairedDevices().firstOrNull { it.address.equals(selected, ignoreCase = true) }
+                appendLog("Car Bluetooth audio: hsae phoneKnown=${phone != null} connected=${phone?.isConnected ?: false}")
+            }
+            probe()
+            mainHandler.postDelayed({ if (!isDestroyed) probe() }, 30_000L)
+            return
+        }
         // 精简移植：getSystemService(Class) 为 API 23+，改用字符串常量（API 19 兼容）。
         val adapter = runCatching { (getSystemService(Context.BLUETOOTH_SERVICE) as? android.bluetooth.BluetoothManager)?.adapter ?: android.bluetooth.BluetoothAdapter.getDefaultAdapter() }.getOrNull()
             ?: return appendLog("Car Bluetooth audio: no Bluetooth adapter")
@@ -5751,6 +5765,35 @@ open class CarPlayHostActivity : Activity() {
         pendingReconnect = retry
         reconnectWaitsForBluetooth = englishReason.contains(BluetoothRadioCheck.RADIO_OFF_MARK, true)
         mainHandler.postDelayed(retry, delayMillis)
+        if (reconnectWaitsForBluetooth) watchHsaeBluetoothOn(generation, retry)
+    }
+
+    /**
+     * HSAE 第三方蓝牙模块的电源变化不发原生 ACTION_STATE_CHANGED 广播，
+     * "蓝牙打开后立即重试"在 HSAE 设备上改为轮询模块电源状态。
+     */
+    private fun watchHsaeBluetoothOn(generation: Int, retry: Runnable) {
+        val hsae = CarPlayBluetoothAdapterFactory.create(this) as? HsaeBluetoothAdapter ?: return
+        if (hsae.isEnabled()) return
+        Thread({
+            while (!shuttingDown.get() && generation == restartGeneration) {
+                try {
+                    Thread.sleep(500)
+                } catch (_: InterruptedException) {
+                    return@Thread
+                }
+                if (shuttingDown.get() || generation != restartGeneration) return@Thread
+                if (!hsae.isEnabled()) continue
+                mainHandler.post {
+                    if (pendingReconnect !== retry) return@post
+                    if (!reconnectScheduled || !reconnectWaitsForBluetooth) return@post
+                    appendLog("Bluetooth turned on; retrying now")
+                    mainHandler.removeCallbacks(retry)
+                    mainHandler.post(retry)
+                }
+                return@Thread
+            }
+        }, "diplay-hsae-bt-wait").apply { isDaemon = true; start() }
     }
 
     /** Full-stack fallback when an AirPlay-only reconnect is unavailable. */

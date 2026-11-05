@@ -8,8 +8,8 @@ import android.app.AlertDialog
 import android.app.Dialog
 import android.app.TimePickerDialog
 import android.view.Window
-import android.bluetooth.BluetoothAdapter
-import android.bluetooth.BluetoothManager
+import com.shilapi.xcertplay.bluetooth.CarPlayBluetoothAdapterFactory
+import com.shilapi.xcertplay.bluetooth.HsaeBluetoothAdapter
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -2934,6 +2934,11 @@ class DiPlayActivity : Activity(), AppAppearanceOwner {
      * opened instead. Every other head unit keeps the standard action, unchanged.
      */
     private fun openBluetoothSettings() {
+        // HSAE 第三方蓝牙模块不受系统蓝牙设置控制，其电源与配对在车机自身设置中管理。
+        if (CarPlayBluetoothAdapterFactory.create(this) is HsaeBluetoothAdapter) {
+            toast(getString(R.string.open_this_setting_from_your_car_s_settings_app))
+            return
+        }
         if (!answeredByBydDecoy(Settings.ACTION_BLUETOOTH_SETTINGS)) {
             openSystem(Intent(Settings.ACTION_BLUETOOTH_SETTINGS))
             return
@@ -4654,17 +4659,16 @@ class DiPlayActivity : Activity(), AppAppearanceOwner {
         OwnScreenStart.start(this, CarPlayScreen.intent(this).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
     }
     private fun choosePhone() {
-        // 精简移植：API 19 无 BLUETOOTH_CONNECT 运行时权限；getSystemService(Class) 为 API 23+，改用字符串常量。
-        val adapter = (getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
-            ?: BluetoothAdapter.getDefaultAdapter()
-        if (adapter == null) {
+        // 精简移植：蓝牙统一走 CarPlayBluetoothAdapter 抽象，原生/HSAE 模块按设备能力自动选择。
+        val bt = CarPlayBluetoothAdapterFactory.create(this)
+        if (!bt.isPresent()) {
             // Android here has no Bluetooth for apps at all, so there is no switch to send the driver to.
             pendingWireless = false
             appDialogBuilder().setTitle(getString(R.string.wireless_carplay_2))
                 .setMessage(getString(R.string.bluetooth_cannot_open_connections))
                 .setPositiveButton(getString(R.string.got_it), null).show(); return
         }
-        if (!adapter.isEnabled) {
+        if (!bt.isEnabled()) {
             // Back from Bluetooth settings and still off: on some head units the switch will not stay on.
             val message = getString(R.string.enable_the_car_s_bluetooth_and_pair_your_iphone_first) +
                 if (bluetoothSettingsVisited) "\n\n" + getString(R.string.bluetooth_will_not_stay_on_hint) else ""
@@ -4676,7 +4680,7 @@ class DiPlayActivity : Activity(), AppAppearanceOwner {
                 }
                 .setNegativeButton(getString(R.string.later), null).show(); return
         }
-        val devices = runCatching { adapter.bondedDevices.sortedBy { it.name ?: "" } }.getOrDefault(emptyList())
+        val devices = runCatching { bt.pairedDevices().sortedBy { it.name ?: "" } }.getOrDefault(emptyList())
         if (devices.isEmpty()) {
             appDialogBuilder().setTitle(getString(R.string.pair_your_iphone))
                 .setMessage(getString(R.string.on_your_iphone_open_settings_bluetooth_and_pair_with_the_c))
