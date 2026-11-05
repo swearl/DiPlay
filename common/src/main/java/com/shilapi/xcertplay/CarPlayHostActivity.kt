@@ -1017,11 +1017,29 @@ open class CarPlayHostActivity : Activity() {
     private fun requestVpnConsent() {
         if (awaitingVpnConsent) return
         val consent = try {
-            CarPlayVpnService.prepare(this)
+            try {
+                CarPlayVpnService.prepare(this)
+            } catch (error: RuntimeException) {
+                // 飞思卡尔车机开机流程可能跳过 ConnectivityService 的 onUserStart(0)，
+                // 导致 system_server 内 prepareVpn 抛 NullPointerException 回到调用方。
+                // 补发 USER_STARTING 广播重建 user 0 的 Vpn 实例后重试一次。
+                appendLog(
+                    "VPN prepare failed (${error.javaClass.simpleName}: " +
+                        "${error.message ?: "no message"}); sending USER_STARTING",
+                )
+                sendUserStartingBroadcast()
+                // 广播是异步派发的，给 system_server 一点时间执行 onUserStart(0)。
+                SystemClock.sleep(VPN_USER_START_RETRY_DELAY_MILLIS)
+                CarPlayVpnService.prepare(this)
+            }
         } catch (error: ActivityNotFoundException) {
             onVpnConsentUnavailable("prepare", null, error)
             return
         } catch (error: SecurityException) {
+            onVpnConsentUnavailable("prepare", null, error)
+            return
+        } catch (error: RuntimeException) {
+            // 重试后仍失败：走现有的不可用路径，绝不能让异常冒泡闪退。
             onVpnConsentUnavailable("prepare", null, error)
             return
         }
@@ -1040,6 +1058,28 @@ open class CarPlayHostActivity : Activity() {
             onVpnConsentUnavailable("launch", consent, error)
         } catch (error: SecurityException) {
             onVpnConsentUnavailable("launch", consent, error)
+        }
+    }
+
+    /**
+     * 补发系统开机时本应发出的 USER_STARTING 广播，触发 ConnectivityService 的
+     * onUserStart(0) 为 user 0 创建缺失的 Vpn 实例。该广播在 Android 4.4 不属于
+     * protected-broadcast 名单，普通应用即可直接发送，无需 root。
+     */
+    private fun sendUserStartingBroadcast() {
+        // ACTION_USER_STARTING / EXTRA_USER_HANDLE 在 SDK 中是隐藏 API，
+        // 只能用字符串字面量（与系统 am broadcast 命令使用的字符串一致）。
+        val intent = Intent("android.intent.action.USER_STARTING")
+        intent.putExtra("android.intent.extra.user_handle", 0)
+        try {
+            sendBroadcast(intent)
+            appendLog("USER_STARTING broadcast sent (user 0)")
+        } catch (error: SecurityException) {
+            // 理论上不会发生；万一 ROM 收紧了保护名单，记录诊断信息便于后续处理。
+            appendLog(
+                "USER_STARTING broadcast rejected: " +
+                    "${error.javaClass.simpleName}: ${error.message ?: "no message"}",
+            )
         }
     }
 
@@ -6608,6 +6648,8 @@ open class CarPlayHostActivity : Activity() {
     }
 
     private companion object {
+        // 补发 USER_STARTING 广播后等待 system_server 处理的时长（毫秒）
+        const val VPN_USER_START_RETRY_DELAY_MILLIS = 500L
         // 经典 onActivityResult / onRequestPermissionsResult 的请求码
         const val RC_VPN_CONSENT = 101
         const val RC_WIRELESS_PERMS = 102
