@@ -185,6 +185,9 @@ class CarPlayBonjour(
     private var discoveryRequested = false
     @Volatile
     private var worker: Thread? = null
+    // JmDNS 初始化线程，Android 4.4 上 create/registerService 可阻塞十余秒，必须放到后台。
+    @Volatile
+    private var mdnsInitializer: Thread? = null
     @Volatile
     private var activeSocket: Socket? = null
     private val interfaceMdns = mutableListOf<JmDNS>()
@@ -282,25 +285,12 @@ class CarPlayBonjour(
                     requireNotNull(localAdvertisedAddress) {
                         "Interface mDNS requires a local advertised address"
                     }
-                    // A JmDNS instance joins only its address family's multicast group.
-                    val hostName = "carplay-${config.deviceId.replace(":", "")}"
-                    for (address in advertisedAddresses) {
-                        // Cache the local name to avoid reverse DNS while preserving the IPv6 scope.
-                        val mdnsAddress = if (address is Inet6Address) {
-                            Inet6Address.getByAddress(hostName, address.address, address.scopeId)
-                        } else {
-                            InetAddress.getByAddress(hostName, address.address)
-                        }
-                        val dns = JmDNS.create(mdnsAddress, hostName)
-                        interfaceMdns.add(dns)
-                        dns.addServiceListener("$CARPLAY_CONTROL_SERVICE_TYPE.local.", interfaceListener)
-                        dns.registerService(ServiceInfo.create(
-                            "$AIRPLAY_SERVICE_TYPE.local.", config.deviceName, config.port,
-                            0, 0, CarPlayBonjourProtocol.airPlayTxtRecords(config, identity),
-                        ))
-                    }
-                    publishedFamilies = advertisedAddresses.joinToString(",") {
-                        if (it is Inet4Address) "IPv4" else "IPv6"
+                    // JmDNS.create/registerService 在 Android 4.4 组播栈上可阻塞十余秒，
+                    // 移入后台守护线程执行，避免阻塞调用方与后续蓝牙 RFCOMM 连接；
+                    // 初始化失败时记日志并自行 close()，可通过 diagnosticSnapshot 观察结果。
+                    mdnsInitializer = Thread(::initializeInterfaceMdns, MDNS_INIT_NAME).apply {
+                        isDaemon = true
+                        start()
                     }
                 } else {
                     registerAirPlay()
@@ -328,8 +318,7 @@ class CarPlayBonjour(
                 }
                 worker?.interrupt()
                 worker = null
-                for (dns in interfaceMdns) runCatching { dns.close() }
-                interfaceMdns.clear()
+                closeInterfaceMdns()
                 publishedFamilies = "none"
                 if (multicastLock?.isHeld == true) multicastLock.release()
                 throw error
@@ -337,9 +326,72 @@ class CarPlayBonjour(
         }
     }
 
+    /**
+     * 后台逐地址创建 JmDNS 实例并发布 AirPlay 服务。
+     * 每步都检查 [closed]，保证关闭后立即停止并回收已创建的实例。
+     */
+    private fun initializeInterfaceMdns() {
+        try {
+            // A JmDNS instance joins only its address family's multicast group.
+            val hostName = "carplay-${config.deviceId.replace(":", "")}"
+            for (address in advertisedAddresses) {
+                if (closed) return
+                // Cache the local name to avoid reverse DNS while preserving the IPv6 scope.
+                val mdnsAddress = if (address is Inet6Address) {
+                    Inet6Address.getByAddress(hostName, address.address, address.scopeId)
+                } else {
+                    InetAddress.getByAddress(hostName, address.address)
+                }
+                val dns = JmDNS.create(mdnsAddress, hostName)
+                synchronized(lifecycleLock) {
+                    if (closed) {
+                        runCatching { dns.close() }
+                        return
+                    }
+                    interfaceMdns.add(dns)
+                }
+                dns.addServiceListener("$CARPLAY_CONTROL_SERVICE_TYPE.local.", interfaceListener)
+                dns.registerService(ServiceInfo.create(
+                    "$AIRPLAY_SERVICE_TYPE.local.", config.deviceName, config.port,
+                    0, 0, CarPlayBonjourProtocol.airPlayTxtRecords(config, identity),
+                ))
+            }
+            synchronized(lifecycleLock) {
+                if (!closed) {
+                    publishedFamilies = advertisedAddresses.joinToString(",") {
+                        if (it is Inet4Address) "IPv4" else "IPv6"
+                    }
+                }
+            }
+            Log.i(TAG, "Interface mDNS published families=$publishedFamilies")
+        } catch (error: Exception) {
+            if (!closed) {
+                Log.w(TAG, "Interface mDNS startup failed", error)
+                runCatching { close() }
+            }
+        }
+    }
+
+    /** 把所有 JmDNS 实例放入各自守护线程并行关闭（close 可能各阻塞十余秒，实例间互不依赖）。 */
+    private fun closeInterfaceMdns() {
+        val instances: List<JmDNS>
+        synchronized(lifecycleLock) {
+            instances = interfaceMdns.toList()
+            interfaceMdns.clear()
+        }
+        for (dns in instances) {
+            Thread({
+                try {
+                    dns.close()
+                } catch (error: Throwable) {
+                    Log.w(TAG, "JmDNS close failed", error)
+                }
+            }, MDNS_CLOSE_NAME).apply { isDaemon = true; start() }
+        }
+    }
+
     override fun close() {
         val workerToJoin: Thread?
-        val dnsToClose: List<JmDNS>
         synchronized(lifecycleLock) {
             if (closed) return
             closed = true
@@ -356,15 +408,15 @@ class CarPlayBonjour(
             services.clear()
             interfaceServices.clear()
             discoveryEvents.clear()
-            dnsToClose = interfaceMdns.toList()
-            interfaceMdns.clear()
             publishedFamilies = "none"
             workerToJoin = worker
             worker = null
             workerToJoin?.interrupt()
             if (multicastLock?.isHeld == true) multicastLock.release()
         }
-        for (dns in dnsToClose) runCatching { dns.close() }
+        // JmDNS.close() 在 Android 4.4 上可阻塞十余秒，改为各守护线程并行关闭且不等待，
+        // 避免阻塞 teardown 与下一轮重连。
+        closeInterfaceMdns()
         workerToJoin?.let(::joinWorker)
     }
 
@@ -658,6 +710,8 @@ class CarPlayBonjour(
     private companion object {
         const val TAG = "xcertplay-bonjour"
         const val WORKER_NAME = "carplay-bonjour"
+        const val MDNS_INIT_NAME = "carplay-bonjour-mdns-init"
+        const val MDNS_CLOSE_NAME = "carplay-bonjour-mdns-close"
         const val AIRPLAY_SERVICE_TYPE = "_airplay._tcp"
         const val CARPLAY_CONTROL_SERVICE_TYPE = "_carplay-ctrl._tcp"
         const val WORKER_POLL_MILLIS = 500L

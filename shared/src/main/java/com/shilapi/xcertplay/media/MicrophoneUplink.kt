@@ -120,8 +120,9 @@ internal class MicrophoneUplink(
         }
 
         val nextSocket = try {
-            // Android 4.4 绑定 IPv6 通配地址「::」会抛 SocketException，改用 WildcardBind 回退绑定
-            DatagramSocket(null).apply { WildcardBind.bindUdp(this) }
+            // Android 4.4 绑 IPv6 通配地址可能失败且失败后 socket 已关闭，
+            // 必须使用 WildcardBind 返回的（可能是重建的）socket
+            WildcardBind.bindUdp(DatagramSocket(null))
         } catch (error: Exception) {
             Log.e(TAG, "microphone socket creation failed", error)
             stats.failure(MicrophoneFailureStage.SOCKET_CREATION, error)

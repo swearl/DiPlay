@@ -168,6 +168,8 @@ class CarPlayMediaEngine(
                     session.close()
                 }
             },
+            // 优先绑定会话本地 scoped 地址，保证 IPv6 链路上视频流能连入
+            session.localAddress,
         )
         streams.put(streamKey, screen)?.close()
         sink.onScreenStreamActive(type, true)

@@ -44,11 +44,12 @@ class ScreenStream(
     private var thread: Thread? = null
     @Volatile private var listener: Listener = object : Listener {}
 
-    fun listen(listener: Listener): Int {
+    /** 开始监听视频流并返回本地端口；[preferredAddress] 为优先绑定的本地地址（可为 null）。 */
+    fun listen(listener: Listener, preferredAddress: InetAddress? = null): Int {
         this.listener = listener
-        // Android 4.4 绑定 IPv6 通配地址「::」会抛 SocketException，改用 WildcardBind 回退绑定
-        val bound = ServerSocket()
-        WildcardBind.bindTcp(bound, 0)
+        // Android 4.4 绑 IPv6 通配地址可能失败且失败后 socket 已关闭，
+        // 必须使用 WildcardBind 返回的（可能是重建的）socket
+        val bound = WildcardBind.bindTcp(ServerSocket(), 0, preferred = preferredAddress)
         server = bound
         thread = Thread({ accept(bound) }, "airplay-screen").apply { isDaemon = true; start() }
         return bound.localPort

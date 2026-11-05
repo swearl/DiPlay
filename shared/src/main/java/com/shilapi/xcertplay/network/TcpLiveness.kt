@@ -16,8 +16,17 @@ internal object TcpLiveness {
     private const val TCP_KEEPINTVL = 5
     private const val TCP_KEEPCNT = 6
 
+    // 反射依赖（android.system.Os 为 API 21+）在目标平台 API 19 上必然缺失，
+    // 首次失败后缓存结果，后续连接直接走降级路径，避免重复反射与重复日志。
+    @Volatile
+    private var unavailableReason: String? = null
+
     fun configure(socket: Socket, diagnostic: (String) -> Unit) {
         socket.keepAlive = true
+        unavailableReason?.let { cached ->
+            diagnostic("TCP peer health tuning unavailable: $cached (cached)")
+            return
+        }
         try {
             // API < 29 时 fromSocket 包装的是 socket 自身描述符，需直接取底层 FileDescriptor
             val fd = runCatching {
@@ -28,7 +37,9 @@ internal object TcpLiveness {
             tune(fd)
             diagnostic("TCP peer health enabled idle=10s interval=3s count=3 deadline=20000ms; no video-idle timeout")
         } catch (failure: Throwable) {
-            diagnostic("TCP peer health tuning unavailable: ${failure.javaClass.simpleName}")
+            val reason = failure.javaClass.simpleName
+            unavailableReason = reason
+            diagnostic("TCP peer health tuning unavailable: $reason")
         }
     }
 

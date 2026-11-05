@@ -36,11 +36,12 @@ class NtpClock : Closeable {
     private var pendingT1: BigInteger? = null
     private var synced = false
 
-    fun listen(): Int {
+    /** 开始监听 NTP 包并返回本地端口；[preferredAddress] 为优先绑定的本地地址（可为 null）。 */
+    fun listen(preferredAddress: InetAddress? = null): Int {
         check(!running.getAndSet(true)) { "NtpClock is already running" }
-        // Android 4.4 绑定 IPv6 通配地址「::」会抛 SocketException，改用 WildcardBind 回退绑定
-        val bound = DatagramSocket(null)
-        WildcardBind.bindUdp(bound)
+        // Android 4.4 绑 IPv6 通配地址可能失败且失败后 socket 已关闭，
+        // 必须使用 WildcardBind 返回的（可能是重建的）socket
+        val bound = WildcardBind.bindUdp(DatagramSocket(null), 0, preferredAddress)
         synchronized(socketLock) { socket = bound }
         receiver = Thread(::runReceiver, "airplay-ntp-rx").apply { isDaemon = true; start() }
         return bound.localPort

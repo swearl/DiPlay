@@ -1173,7 +1173,10 @@ class CarPlayController(
             }
             startedBonjour = bonjourClient
             diagnostics.start()
-            debugLog("wireless Bonjour services started mode=interface iface=${hotspotInfo.interfaceName ?: "unknown"}")
+            debugLog(
+                "wireless Bonjour services started mode=interface iface=${hotspotInfo.interfaceName ?: "unknown"} " +
+                    "(publication continues in background)",
+            )
             if (isStaleWirelessRun(generation)) {
                 return
             }

@@ -821,15 +821,16 @@ class AirPlaySession(
     }
 
     private fun openTiming(peerPort: Int): Int {
-        val port = ntp.listen()
+        // 优先绑定会话本地地址，保证 IPv6 链路上能收到手机发来的 NTP 包
+        val port = ntp.listen(localAddress)
         if (peerPort > 0) peerAddress?.let { ntp.start(it, peerPort) }
         return port
     }
 
     private fun openKeepAlive(): Int {
-        // Android 4.4 绑定 IPv6 通配地址「::」会抛 SocketException，改用 WildcardBind 回退绑定
-        val socket = DatagramSocket(null)
-        WildcardBind.bindUdp(socket)
+        // Android 4.4 绑 IPv6 通配地址可能失败且失败后 socket 已关闭，
+        // 必须使用 WildcardBind 返回的（可能是重建的）socket，并优先绑定会话本地 scoped 地址
+        val socket = WildcardBind.bindUdp(DatagramSocket(null), 0, localAddress)
         keepAliveSocket = socket
         keepAliveThread = Thread({ runKeepAlive(socket) }, "airplay-keepalive").apply {
             isDaemon = true
@@ -850,9 +851,9 @@ class AirPlaySession(
     }
 
     private fun openEvent(): Int {
-        // Android 4.4 绑定 IPv6 通配地址「::」会抛 SocketException，改用 WildcardBind 回退绑定
-        val server = ServerSocket()
-        WildcardBind.bindTcp(server, 0)
+        // Android 4.4 绑定 IPv6 通配地址「::」会失败且失败后 socket 已被关闭，
+        // 必须使用 WildcardBind 返回的（可能是重建的）socket，并优先绑定会话本地 scoped 地址
+        val server = WildcardBind.bindTcp(ServerSocket(), 0, preferred = localAddress)
         eventServer = server
         spawnEvent("airplay-event-accept") { acceptEvent(server) }
         return server.localPort

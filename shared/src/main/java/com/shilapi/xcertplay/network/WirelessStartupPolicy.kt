@@ -7,7 +7,9 @@ object WirelessStartupPolicy {
     const val HOTSPOT_READY_MILLIS = 15_000L
     const val INTERFACE_POLL_MILLIS = 250L
     const val STABLE_SAMPLES = 3
-    const val FIRST_TCP_MILLIS = 30_000L
+    // 实测地址族不匹配时 iPhone 端几乎不会自发连入，等待过久只是拖延翻转重试；
+    // 日志显示翻转偏好后 0.5 秒内即有 TCP 接入，故缩短到 15 秒。
+    const val FIRST_TCP_MILLIS = 15_000L
     const val MAX_STARTUP_RETRIES = 5
     const val STABLE_SESSION_MILLIS = 60_000L
 }
