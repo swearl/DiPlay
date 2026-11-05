@@ -52,4 +52,6 @@ dependencies {
     // 仅保留纯 Java 依赖（无 androidx）
     implementation libs.bouncycastle
     implementation libs.jmdns
+    // HSAE 第三方蓝牙模块 autosdk（含 BtPhoneProxy），运行时直连，需打包进 APK
+    implementation files('libs/autosdk.jar')
 }
