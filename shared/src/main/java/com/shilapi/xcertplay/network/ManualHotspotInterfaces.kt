@@ -21,7 +21,12 @@ internal class ManualHotspotInterfaces(
     private var lastOwnershipDiagnostic: String? = null
 
     fun sample(): HotspotNetworkSnapshot {
-        val before = runCatching { connectivity?.activeNetwork }
+        // 精简移植修复：getActiveNetwork/getLinkProperties(Network)/allNetworks 均为 API 21+，
+        // 在 API 19 上抛 NoSuchMethodError 被 runCatching 吞掉，导致 before 恒为失败、
+        // consistent 恒为 false，热点采样被以 network_changed=true 一律拒绝并超时。
+        // 改用 API 1 起可用的 activeNetworkInfo 稳定字段 + /proc/net/route 默认路由接口名
+        // 作为默认网络身份键；键前后相等即视为稳定（无默认网络时 null == null 同样稳定）。
+        val before = defaultNetworkKey()
         val upstreams = runCatching {
             checkNotNull(connectivity)
             connectivity.allNetworks.mapNotNull { network ->
@@ -30,9 +35,7 @@ internal class ManualHotspotInterfaces(
                 links.interfaceName?.takeIf { caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) }
             }.toSet()
         }.getOrNull()
-        val defaultName = runCatching {
-            before.getOrNull()?.let { connectivity?.getLinkProperties(it)?.interfaceName }
-        }.getOrNull()
+        val defaultName = before.defaultIface
         val interfaces = runCatching {
             Collections.list(NetworkInterface.getNetworkInterfaces()).mapNotNull { iface ->
                 runCatching {
@@ -52,13 +55,52 @@ internal class ManualHotspotInterfaces(
             upstreams = upstreams,
             defaultInterface = defaultName,
         )
-        val after = runCatching { connectivity?.activeNetwork }
+        val after = defaultNetworkKey()
         return HotspotNetworkSnapshot(
             interfaces, ap, upstreams, defaultName,
-            consistent = before.isSuccess && after.isSuccess && before.getOrNull() == after.getOrNull(),
+            consistent = before == after,
             apEnabled = apEnabled,
         )
     }
+
+    /**
+     * 默认网络身份键（API 19 兼容）：activeNetworkInfo 的稳定字段加上默认路由接口名。
+     * 采样前后键相等说明默认网络未切换，可以采信本次拓扑快照。
+     */
+    private fun defaultNetworkKey(): DefaultNetworkKey {
+        val info = runCatching { connectivity?.activeNetworkInfo }.getOrNull()
+        return DefaultNetworkKey(
+            type = info?.type ?: -1,
+            subtype = info?.subtype ?: -1,
+            connected = info?.isConnected ?: false,
+            extraInfo = info?.extraInfo,
+            defaultIface = defaultRouteInterface(),
+        )
+    }
+
+    /**
+     * 从 /proc/net/route 读取 IPv4 默认路由（destination 为 00000000 的行）的出口接口名。
+     * 该文件不依赖任何 Android API 版本，可替代 API 21+ 的 getLinkProperties(Network)。
+     */
+    private fun defaultRouteInterface(): String? = runCatching {
+        File("/proc/net/route").useLines { lines ->
+            lines.drop(1) // 首行为表头
+                .firstOrNull { line ->
+                    val columns = line.trim().split(Regex("\\s+"))
+                    columns.size > 1 && columns[1] == "00000000"
+                }
+                ?.trim()?.split(Regex("\\s+"))?.firstOrNull()
+        }
+    }.getOrNull()
+
+    /** 默认网络身份键；null 接口名与缺省网络一起参与相等比较。 */
+    private data class DefaultNetworkKey(
+        val type: Int,
+        val subtype: Int,
+        val connected: Boolean,
+        val extraInfo: String?,
+        val defaultIface: String?,
+    )
 
     /**
      * Some head units run the car hotspot on a Wi-Fi chip the platform never reports as a tether
