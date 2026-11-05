@@ -14,6 +14,7 @@ import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.net.SocketException
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -527,8 +528,13 @@ class AirPlaySession(
                 notifySetupResponseSent()
             }
         } catch (error: Exception) {
-            closeReason = "control I/O failed: ${error.message ?: error.javaClass.simpleName}"
-            if (!closed.get()) Log.e(TAG, "airplay $closeReason", error)
+            // 本地关闭触发的 SocketException（读路径 "Socket is closed" / 写路径 "Socket closed"）
+            // 属会话正常收尾时读阻塞被打断，不算错误：归类后仅靠 finally 的收尾日志输出，
+            // 不再按 E 级打印堆栈；其余异常维持 E 级。
+            val message = error.message ?: error.javaClass.simpleName
+            val benignClose = error is SocketException && message.contains("closed", ignoreCase = true)
+            closeReason = if (benignClose) "control socket closed" else "control I/O failed: $message"
+            if (!benignClose && !closed.get()) Log.e(TAG, "airplay $closeReason", error)
         } finally {
             debugLog("airplay control closing reason=$closeReason activeStreams=$activeStreams")
             close()
