@@ -1,11 +1,8 @@
 package com.shilapi.xcertplay.bluetooth
 
-import android.bluetooth.BluetoothA2dp
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
-import android.bluetooth.BluetoothHeadset
 import android.bluetooth.BluetoothManager
-import android.bluetooth.BluetoothProfile
 import android.bluetooth.BluetoothSocket
 import android.content.Context
 import android.os.SystemClock
@@ -24,7 +21,7 @@ import java.util.concurrent.atomic.AtomicReference
  * 通用蓝牙模块的适配器实现，包装 Android 原生 [BluetoothAdapter]。
  *
  * 收编自 CarPlayController 的原生蓝牙逻辑：适配器获取、开启等待、
- * 配对设备与 profile 连接状态、本机 MAC、RFCOMM 连接（含超时控制）。
+ * 配对设备、本机 MAC、RFCOMM 连接（含超时控制）。
  */
 class NativeBluetoothAdapter(private val context: Context) : CarPlayBluetoothAdapter {
 
@@ -32,9 +29,6 @@ class NativeBluetoothAdapter(private val context: Context) : CarPlayBluetoothAda
         private const val TAG = "NativeBluetoothAdapter"
         /** RFCOMM 连接超时，沿用 CarPlayController 原值。 */
         private const val RFCOMM_CONNECT_TIMEOUT_MILLIS = 15_000L
-        // BluetoothProfile.A2DP_SINK 和 HEADSET_CLIENT，对公开 SDK 隐藏。
-        private const val PROFILE_A2DP_SINK = 11
-        private const val PROFILE_HEADSET_CLIENT = 16
         private val BLUETOOTH_ADDRESS = Regex("^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$")
         private const val ADAPTER_ADDRESS_PLACEHOLDER = "02:00:00:00:00:00"
     }
@@ -64,16 +58,22 @@ class NativeBluetoothAdapter(private val context: Context) : CarPlayBluetoothAda
         return adapter.isEnabled
     }
 
+    /**
+     * 已配对设备列表。
+     *
+     * 精简移植：只返回配对设备，不做 profile 代理连通性探测——
+     * 配对的设备连不通时 profile 服务不响应代理请求，各吃满 3 秒超时，
+     * 会导致 choosePhone 弹框前卡顿数秒。连接状态仅用反射 isConnected（非阻塞）。
+     */
     override fun pairedDevices(): List<CarPlayBluetoothDevice> {
         val adapter = adapter() ?: return emptyList()
         val bonded = runCatching { adapter.bondedDevices.orEmpty() }.getOrNull() ?: return emptyList()
-        val connectedAddresses = profileConnectedAddresses(adapter).mapTo(mutableSetOf()) { it.address }
         return bonded.mapNotNull { device ->
             val address = device.address ?: return@mapNotNull null
             CarPlayBluetoothDevice(
                 name = runCatching { device.name }.getOrNull(),
                 address = address,
-                isConnected = isConnected(device) || address in connectedAddresses,
+                isConnected = isConnected(device),
             )
         }
     }
@@ -214,54 +214,5 @@ class NativeBluetoothAdapter(private val context: Context) : CarPlayBluetoothAda
     } catch (error: RuntimeException) {
         Log.w(TAG, "Could not read Bluetooth connection state", error)
         false
-    }
-
-    /** 通过 HFP/A2DP（含隐藏的 sink/client profile）收集当前已连接设备。收编自 CarPlayController。 */
-    private fun profileConnectedAddresses(adapter: BluetoothAdapter): Set<BluetoothDevice> = buildSet {
-        addAll(profileConnectedDevices(adapter, BluetoothProfile.HEADSET, BluetoothHeadset::class.java))
-        addAll(profileConnectedDevices(adapter, BluetoothProfile.A2DP, BluetoothA2dp::class.java))
-        // 车机是手机音频/通话的接收端，iPhone 会出现在这些隐藏 profile 下。
-        // 只在已连接时才询问：缺失的 profile 服务不响应代理请求，会吃满超时。
-        for (profile in intArrayOf(PROFILE_A2DP_SINK, PROFILE_HEADSET_CLIENT)) {
-            val connected = try {
-                adapter.getProfileConnectionState(profile) == BluetoothProfile.STATE_CONNECTED
-            } catch (error: SecurityException) {
-                Log.w(TAG, "Could not read Bluetooth profile $profile state", error)
-                false
-            }
-            if (connected) addAll(profileConnectedDevices(adapter, profile, BluetoothProfile::class.java))
-        }
-    }
-
-    private fun <T : BluetoothProfile> profileConnectedDevices(
-        adapter: BluetoothAdapter,
-        profile: Int,
-        profileClass: Class<T>,
-    ): Set<BluetoothDevice> {
-        val latch = CountDownLatch(1)
-        val devices = java.util.Collections.synchronizedSet(mutableSetOf<BluetoothDevice>())
-        val listener = object : BluetoothProfile.ServiceListener {
-            override fun onServiceConnected(profileId: Int, proxy: BluetoothProfile) {
-                try {
-                    if (profileClass.isInstance(proxy)) {
-                        devices.addAll(proxy.connectedDevices.orEmpty())
-                    }
-                } catch (error: SecurityException) {
-                    Log.w(TAG, "Could not read connected Bluetooth devices", error)
-                } finally {
-                    adapter.closeProfileProxy(profileId, proxy)
-                    latch.countDown()
-                }
-            }
-
-            override fun onServiceDisconnected(profileId: Int) {
-                latch.countDown()
-            }
-        }
-        if (!adapter.getProfileProxy(context, listener, profile)) return emptySet()
-        if (!latch.await(3, TimeUnit.SECONDS)) {
-            Log.w(TAG, "Timed out reading Bluetooth profile $profile")
-        }
-        return synchronized(devices) { devices.toSet() }
     }
 }
