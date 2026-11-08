@@ -22,14 +22,62 @@ internal sealed interface VideoJob {
     data object Resync : VideoJob
 }
 
-/** Do not resume dependent pictures after losing a reference frame. */
+/**
+ * Do not resume dependent pictures after losing a reference frame.
+ * 精简移植：参考链三态状态机。queueInputBuffer 成功只代表帧进入输入队列，不代表老 OMX/VPU
+ * 硬件解码器真正解码成功（IDR 可能被静默丢弃，应用层无任何异常）。因此 IDR 需等到首个解码
+ * 输出后才确认参考链，期间 P 帧不入队：花屏窗口归零，代价仅为解码器重建后约一帧的额外延迟。
+ */
 internal class VideoReferenceChain {
-    var needsKeyFrame = true
-        private set
-    fun reset() { needsKeyFrame = true }
-    fun accepts(bytes: ByteArray, codec: VideoCodec): Boolean =
-        !needsKeyFrame || MediaCodecSupport.isRandomAccess(bytes, codec)
-    fun onQueued() { needsKeyFrame = false }
+    private enum class State {
+        /** 等待 IDR 入队。 */
+        WAIT_KEY,
+        /** IDR 已入队，等待其产生解码输出。 */
+        PENDING_CONFIRM,
+        /** 参考链已建立，所有帧放行。 */
+        ESTABLISHED,
+    }
+
+    // feed 只在 worker 线程写入；输出确认可能在输出线程（若启用）执行。
+    // @Volatile 保证可见性；与 worker 的写竞争最坏只延迟一次确认，随后由超时恢复兜底，无需加锁。
+    @Volatile private var state = State.WAIT_KEY
+    @Volatile private var pendingSinceNanos = 0L
+
+    /** 参考链未建立（等待 IDR 或等待 IDR 输出确认）时为 true，沿用旧语义供恢复/请求关键帧判定。 */
+    val needsKeyFrame: Boolean
+        get() = state != State.ESTABLISHED
+
+    fun reset() {
+        state = State.WAIT_KEY
+        pendingSinceNanos = 0L
+    }
+
+    /** 仅放行随机访问帧；待确认期间新 IDR 也放行（重新武装超时，替换丢失的旧 IDR）。 */
+    fun accepts(isRandomAccess: Boolean): Boolean =
+        state == State.ESTABLISHED || isRandomAccess
+
+    /** 关键帧入队成功后调用；参考链已建立时无需再次确认。 */
+    fun onKeyFrameQueued(nowNanos: Long) {
+        if (state == State.ESTABLISHED) return
+        state = State.PENDING_CONFIRM
+        pendingSinceNanos = nowNanos
+    }
+
+    /**
+     * 若处于待确认状态则切换为已建立并返回 IDR 入队时刻（用于诊断延迟），否则返回 0。
+     * 只应由看到解码输出的线程调用。
+     */
+    fun takePendingConfirmation(nowNanos: Long): Long {
+        if (state != State.PENDING_CONFIRM) return 0L
+        val queuedAt = pendingSinceNanos
+        state = State.ESTABLISHED
+        pendingSinceNanos = 0L
+        return queuedAt
+    }
+
+    /** IDR 入队后是否超过 [timeoutNanos] 仍无解码输出（硬解码器可能已静默丢弃关键帧）。 */
+    fun isPendingConfirmation(nowNanos: Long, timeoutNanos: Long): Boolean =
+        state == State.PENDING_CONFIRM && nowNanos - pendingSinceNanos >= timeoutNanos
 }
 
 /** Limit latency and memory without ever dropping a reference frame silently. */
