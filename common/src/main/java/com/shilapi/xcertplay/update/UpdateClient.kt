@@ -14,16 +14,21 @@ import javax.net.ssl.SSLSocketFactory
 
 internal object UpdateClient {
     // 发布仓库：swearl/DiPlay，Release tag 形如 v{versionName}-{versionCode}
-    internal const val RELEASES_URL =
-        "https://api.github.com/repos/swearl/DiPlay/releases?per_page=3"
+    // Android 4.4 无 GCM 套件而 api.github.com 只接受 AEAD 套件，无法直连，
+    // 因此版本检查不走 API JSON，改用 release 网页两步解析（latest 页取 tag，
+    // expanded_assets 页取资产链接），抓取与下载均镜像优先、直连回退。
+    private const val RELEASES_PAGE = "https://github.com/swearl/DiPlay/releases"
+    internal val LATEST_PAGE_URL = "$RELEASES_PAGE/latest"
+    internal fun expandedAssetsUrl(tag: String) = "$RELEASES_PAGE/expanded_assets/$tag"
     private const val CONNECT_TIMEOUT_MILLIS = 10_000
     private const val READ_TIMEOUT_MILLIS = 30_000
     // Far above the release APKs (under 20 MB at v0.2.21). It stops a body that never ends.
     internal const val MAXIMUM_DOWNLOAD_BYTES = 64L * 1024 * 1024
     private const val MAXIMUM_TEXT_BYTES = 4 * 1024 * 1024
     private const val BUFFER_BYTES = 64 * 1024
-    // 镜像优先的下载前缀，$url 为原始 GitHub 下载链接；最后回退到原始链接
-    private val MIRROR_PREFIXES = listOf("https://ghproxy.net/", "https://gh-proxy.com/")
+    // 镜像优先的前缀，$url 为原始 GitHub 链接；最后回退到原始链接。
+    // gh-proxy.com 兼容 Android 4.4 的 CBC 套件，排首位；ghproxy.net 仅作后备。
+    private val MIRROR_PREFIXES = listOf("https://gh-proxy.com/", "https://ghproxy.net/")
 
     internal fun fetchText(
         url: String,
@@ -49,6 +54,24 @@ internal object UpdateClient {
         } finally {
             connection.disconnect()
         }
+    }
+
+    // 页面抓取与下载一致：镜像候选逐一尝试，任一成功即返回，全部失败抛最后一个异常
+    internal fun fetchTextMirrored(
+        url: String,
+        accept: String?,
+        userAgent: String,
+        openConnection: (URL) -> URLConnection = { it.openConnection() },
+    ): String {
+        var lastFailure: Throwable? = null
+        for (candidate in MIRROR_PREFIXES.map { it + url } + url) {
+            try {
+                return fetchText(candidate, accept, userAgent, openConnection)
+            } catch (failure: Throwable) {
+                lastFailure = failure
+            }
+        }
+        throw lastFailure ?: IOException("Request to $url failed with no attempt")
     }
 
     internal fun download(url: String, destination: File, onProgress: (Long, Long?) -> Unit) {

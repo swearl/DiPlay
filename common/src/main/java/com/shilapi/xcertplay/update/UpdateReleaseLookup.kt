@@ -9,13 +9,22 @@ internal object UpdateReleaseLookup {
         userAgent: String,
         openConnection: (URL) -> URLConnection = { it.openConnection() },
     ): UpdateRelease? {
-        val json = UpdateClient.fetchText(
-            UpdateClient.RELEASES_URL,
-            "application/vnd.github+json",
+        // 第一步：镜像优先抓 latest 页，取最新 tag（Android 4.4 无法直连 GitHub，镜像回退直连）
+        val html = UpdateClient.fetchTextMirrored(
+            UpdateClient.LATEST_PAGE_URL,
+            null,
             userAgent,
             openConnection,
         )
-        val release = UpdateCatalog.parse(json) ?: return null
+        val tag = UpdateCatalog.parseLatestTag(html) ?: return null
+        // 第二步：抓 expanded_assets 页，解析成对的 APK 与 .sha256 校验文件
+        val assets = UpdateClient.fetchTextMirrored(
+            UpdateClient.expandedAssetsUrl(tag),
+            null,
+            userAgent,
+            openConnection,
+        )
+        val release = UpdateCatalog.parseAssets(assets, tag) ?: return null
         return release.takeIf { UpdateVersion.isNewer(it.tagName, installedVersion) }
     }
 }
