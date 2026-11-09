@@ -77,11 +77,12 @@ kotlin {
     }
 }
 
-// 输出文件命名：DiPlay-Freescale-<versionName>-<versionCode>.apk（debug/release 分别输出在各自 variant 目录，复制到 dist 时再加构建类型后缀）
+// 输出文件命名：DiPlay-<versionName>-<versionCode>-<debug|release>.apk（对应 AGENTS.md 第 10 条，debug/release 分别输出在各自 variant 目录，复制到 dist 时直接使用该文件名）
 android.applicationVariants.all {
+    val buildTypeName = buildType.name
     outputs.all {
         val output = this as BaseVariantOutputImpl
-        output.outputFileName = "DiPlay-Freescale-$versionName-$versionCode.apk"
+        output.outputFileName = "DiPlay-$versionName-$versionCode-$buildTypeName.apk"
     }
 }
 
