@@ -227,6 +227,17 @@ class CarPlayController(
     /** Told when retained iPhone now-playing metadata changes; may run on any thread. */
     @Volatile var nowPlayingListener: ((com.shilapi.xcertplay.media.CarPlayNowPlaying) -> Unit)? = null
 
+    // 精简移植恢复：iAP2 封面回放快照（≤1MiB），供 attach 时按引用精确重放最后一次封面。
+    private val albumReplayLock = Any()
+    private var initialArtworkReplay: com.shilapi.xcertplay.transport.Iap2ArtworkTransfer? = null
+
+    /** One bounded payload, never a nearest-cover guess when a reference is absent. */
+    fun matchingArtworkSnapshot(id: Int?): com.shilapi.xcertplay.transport.Iap2ArtworkTransfer? =
+        synchronized(albumReplayLock) { initialArtworkReplay?.takeIf { id != null && it.id == id } }
+
+    /** Told when an iAP2 Now Playing artwork transfer completes; may run on the link worker. */
+    @Volatile var artworkListener: ((Int, ByteArray) -> Unit)? = null
+
     /** Video in car; set before [start] to offer it to the iPhone (with AirPlayConfig.videoInCar). */
     @Volatile var videoListener: CarPlayVideoListener? = null
     @Volatile private var videoGate: VideoInCarGate? = null
@@ -340,6 +351,8 @@ class CarPlayController(
             if (currentCornerMask?.session === session) currentCornerMask = null
             if (activeSession === session) {
                 activeSession = null
+                // 精简移植恢复：会话结束丢弃封面回放快照，避免陈旧封面被新会话重放。
+                synchronized(albumReplayLock) { initialArtworkReplay = null }
                 com.shilapi.xcertplay.glance.CarPlayGlance.setConnected(false)
                 videoListener?.onVideoSessionEnded()
                 synchronized(playbackStatus) {
@@ -811,7 +824,52 @@ class CarPlayController(
         }
     }
 
-    // 精简移植：专辑封面恢复（refreshInitialNowPlaying/onArtworkTransfer）已随仪表音乐卡删除。
+    /** 封面恢复请求结果；调用方拥有单次发送预算（与上游 InitialAlbumRefreshResult 一致）。 */
+    enum class InitialAlbumRefreshResult { SENT, FAILED, CLOSED, INACTIVE_SESSION, CANCELLED, CHANNEL_UNAVAILABLE }
+
+    /** 重发 NowPlayingUpdates 订阅让 iPhone 重传当前曲目元数据与封面；在封面的解码工作线程上调用。 */
+    fun refreshInitialNowPlaying(
+        stillNeeded: () -> Boolean,
+        beforeSend: () -> Boolean = { true },
+        onFinished: (InitialAlbumRefreshResult) -> Unit = {},
+    ) {
+        var result = InitialAlbumRefreshResult.CANCELLED
+        run {
+            try {
+                if (closed) { result = InitialAlbumRefreshResult.CLOSED; return@run }
+                if (activeSession == null) { result = InitialAlbumRefreshResult.INACTIVE_SESSION; return@run }
+                if (!stillNeeded()) return@run
+                // The RFCOMM bootstrap is not the runtime metadata channel after wireless handoff.
+                val channel = if (config.transport == CarPlayTransport.WIRELESS) wirelessTunnelChannel else csm
+                if (channel == null) {
+                    result = InitialAlbumRefreshResult.CHANNEL_UNAVAILABLE
+                    debugLog("album recovery skipped channel=unavailable")
+                    return@run
+                }
+                if (closed) { result = InitialAlbumRefreshResult.CLOSED; return@run }
+                if (!stillNeeded() || !beforeSend()) return@run
+                // Claim only at the send boundary; preflight skips leave the budget intact.
+                result = InitialAlbumRefreshResult.FAILED
+                channel.send(com.shilapi.xcertplay.iap2.message.Iap2ControlMessages.startNowPlayingUpdates(), 250)
+                result = InitialAlbumRefreshResult.SENT
+                debugLog("album recovery subscription sent")
+            } catch (error: Exception) {
+                debugLog("album recovery subscription failed type=${error.javaClass.simpleName}")
+            } finally {
+                onFinished(result)
+            }
+        }
+    }
+
+    /** iAP2 NowPlayingArtworkData 传输完成：写入回放快照（≤1MiB）并派发给 artworkListener。 */
+    private fun onArtworkTransfer(transfer: com.shilapi.xcertplay.transport.Iap2ArtworkTransfer) {
+        if (closed) return
+        synchronized(albumReplayLock) {
+            initialArtworkReplay = transfer.takeIf { it.bytes.size <= 1024 * 1024 }
+        }
+        debugLog("iap2 artwork transfer id=0x${transfer.id.toString(16)} bytes=${transfer.bytes.size}")
+        artworkListener?.invoke(transfer.id, transfer.bytes)
+    }
 
     private fun startMfi() {
         if (!hasRequiredUsbService()) return
@@ -1151,6 +1209,7 @@ class CarPlayController(
                 stream,
                 traceContext = "wireless-rfcomm",
                 onTrace = ::debugLog,
+                onArtwork = ::onArtworkTransfer,
             )
             synchronized(wirelessResourceLock) {
                 if (isStaleWirelessRun(generation)) {
@@ -1282,6 +1341,7 @@ class CarPlayController(
                 stream,
                 traceContext = "wireless-tunnel",
                 onTrace = ::debugLog,
+                onArtwork = ::onArtworkTransfer,
             )
         } catch (error: Throwable) {
             debugLog("Could not open the tunneled iAP2 link", error)
@@ -1945,6 +2005,7 @@ class CarPlayController(
                 tracedCarkit,
                 traceContext = "wired",
                 onTrace = ::debugLog,
+                onArtwork = ::onArtworkTransfer,
             )
             this.csm = csm
             debugLog("wired iAP2 CSM channel opened")
