@@ -94,36 +94,6 @@ object MediaCodecSupport {
         return output
     }
 
-    /** Extracts the H.264 SPS (nal type 7) and PPS (nal type 8) NAL units, without start codes, from an Annex B stream. */
-    fun spsPpsFromAnnexB(annexB: ByteArray): List<ByteArray> {
-        // 定位全部起始码，再按 nal 头的类型字节筛选 7/8
-        val nalRanges = ArrayList<IntRange>(4)
-        var cursor = 0
-        var current = -1
-        while (cursor + 3 < annexB.size) {
-            val prefix = when {
-                annexB[cursor] != 0.toByte() || annexB[cursor + 1] != 0.toByte() -> 0
-                annexB[cursor + 2] == 1.toByte() -> 3
-                annexB[cursor + 2] == 0.toByte() && annexB[cursor + 3] == 1.toByte() -> 4
-                else -> 0
-            }
-            if (prefix > 0 && cursor + prefix < annexB.size) {
-                if (current >= 0) nalRanges.add(current until cursor)
-                current = cursor + prefix
-                cursor += prefix
-            } else cursor++
-        }
-        if (current in 0 until annexB.size) nalRanges.add(current until annexB.size)
-        val sets = ArrayList<ByteArray>(2)
-        for (range in nalRanges) {
-            val header = annexB[range.first].toInt() and 255
-            if (header and 31 == 7 || header and 31 == 8) {
-                sets.add(annexB.copyOfRange(range.first, range.last + 1))
-            }
-        }
-        return sets
-    }
-
     /** IDR (AVC) or IRAP (HEVC) starts an independently decodable reference chain. */
     fun isRandomAccess(annexB: ByteArray, codec: VideoCodec): Boolean {
         var cursor = 0

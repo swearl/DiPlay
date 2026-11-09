@@ -968,11 +968,6 @@ private class VideoDecoder(
     private var outputSurface: Surface? = surface
     private var parking: ParkingOutput? = null
     private var lastConfig: VideoJob.Config? = null
-    // 精简移植：configure 时使用的 csd 原始 SPS/PPS（不含起始码），用于与流内参数集比对（防御老解码器花屏）
-    private var configuredSps: ByteArray? = null
-    private var configuredPps: ByteArray? = null
-    // 精简移植：流内参数集不一致触发恢复的限频时间戳（0 表示从未触发）
-    private var lastParameterSetRecoverNs = 0L
     @Volatile private var renderedFrameLogged = false
     // The operating rate still asked for, dropped for this stream once a decoder refuses it; and the rate
     // the current codec was configured with.
@@ -1114,10 +1109,6 @@ private class VideoDecoder(
                         is VideoJob.Resync -> recover("video queue overflow")
                         null -> Unit
                     }
-                    // 精简移植：IDR 入队后长时间无解码输出，老解码器可能已静默丢弃关键帧，重建解码器重新等 IDR
-                    if (referenceChain.isPendingConfirmation(System.nanoTime(), KEYFRAME_CONFIRM_TIMEOUT_NS)) {
-                        recover("keyframe output not confirmed within ${KEYFRAME_CONFIRM_TIMEOUT_NS / 1_000_000L} ms")
-                    }
                     if (outputThread == null) decoder?.let(::drainOutput)
                     stats.logIfDue()?.let(report)
                     if (referenceChain.needsKeyFrame && lastConfig != null && outputSurface != null) requestKeyFrameIfDue()
@@ -1235,9 +1226,6 @@ private class VideoDecoder(
                 ?.let { listOf(it) } ?: emptyList()
         } else {
             val (sps, pps) = MediaCodecSupport.avcParameterSets(codecData)
-            // 精简移植：缓存配置时使用的原始 SPS/PPS，供流内参数集一致性校验
-            configuredSps = sps.takeIf { it.isNotEmpty() }
-            configuredPps = pps.takeIf { it.isNotEmpty() }
             listOfNotNull(
                 sps.takeIf { it.isNotEmpty() }?.let { START_CODE + it },
                 pps.takeIf { it.isNotEmpty() }?.let { START_CODE + it },
@@ -1492,29 +1480,9 @@ private class VideoDecoder(
         val config = lastConfig ?: return
         if (outputSurface == null) return
         if (annexB.isEmpty()) { recover("invalid video access unit"); return }
-        // 精简移植：只扫描一次 Annex B，同时用于参考链放行判定与关键帧入队确认
-        val keyFrame = MediaCodecSupport.isRandomAccess(annexB, config.codec)
-        if (!referenceChain.accepts(keyFrame)) {
+        if (!referenceChain.accepts(annexB, config.codec)) {
             requestKeyFrameIfDue()
             return
-        }
-        // 精简移植：关键帧携带流内 SPS/PPS 时与配置 csd 比对。不一致说明编码参数已变化，
-        // API 19 老 OMX 解码器不支持流内参数集更新，会产生花屏/绿屏，限频触发解码器重建。
-        if (keyFrame && (configuredSps != null || configuredPps != null)) {
-            val inBand = MediaCodecSupport.spsPpsFromAnnexB(annexB)
-            val inSps = inBand.firstOrNull { it[0].toInt() and 31 == 7 }
-            val inPps = inBand.firstOrNull { it[0].toInt() and 31 == 8 }
-            val mismatched = (inSps != null && configuredSps != null && !nalEquals(inSps, configuredSps!!)) ||
-                (inPps != null && configuredPps != null && !nalEquals(inPps, configuredPps!!))
-            if (mismatched) {
-                val nowNs = System.nanoTime()
-                if (lastParameterSetRecoverNs == 0L || nowNs - lastParameterSetRecoverNs >= PARAMETER_SET_RECHECK_NS) {
-                    lastParameterSetRecoverNs = nowNs
-                    recover("in-band parameter set differs from configured csd")
-                    return
-                }
-                Log.w(TAG, "video in-band parameter set differs from configured csd; recovery rate limited")
-            }
         }
         if (decoder == null) configureDecoder(config)
         val codec = decoder ?: return
@@ -1572,8 +1540,7 @@ private class VideoDecoder(
                 queuedSlot = (queuedSlot + 1) % queuedPresentationUs.size
             }
             codec.queueInputBuffer(index, 0, annexB.size, presentationUs, 0)
-            // 关键帧入队后进入待确认状态，等首个解码输出才放行后续 P 帧（防老解码器静默丢 IDR 导致花屏）
-            if (keyFrame) referenceChain.onKeyFrameQueued(System.nanoTime())
+            referenceChain.onQueued()
         } else {
             recover("video frame exceeded codec input capacity")
             return
@@ -1599,19 +1566,6 @@ private class VideoDecoder(
         requestKeyFrame()
     }
 
-    /** 精简移植：去除 NAL 尾部多余的零字节后比对，兼容 Annex B 中可能附加的 trailing zero 字节。 */
-    private fun nalEquals(a: ByteArray, b: ByteArray): Boolean {
-        var endA = a.size
-        var endB = b.size
-        while (endA > 0 && a[endA - 1] == 0.toByte()) endA--
-        while (endB > 0 && b[endB - 1] == 0.toByte()) endB--
-        if (endA != endB) return false
-        for (index in 0 until endA) {
-            if (a[index] != b[index]) return false
-        }
-        return true
-    }
-
     private fun queuedSlotOf(presentationUs: Long): Int =
         queuedPresentationUs.indices.firstOrNull { queuedPresentationUs[it] == presentationUs } ?: -1
 
@@ -1633,11 +1587,6 @@ private class VideoDecoder(
                 // not shown, so it is neither paced nor counted.
                 val shown = render && outputSurface !== parking?.surface
                 val now = System.nanoTime()
-                // 解码输出确认参考链建立；入队到输出的延迟用于诊断（老解码器静默丢 IDR 时不会走到这里）
-                val confirmedAt = referenceChain.takePendingConfirmation(now)
-                if (confirmedAt != 0L) {
-                    Log.i(TAG, "video decoder keyframe confirmed latencyMs=${(now - confirmedAt) / 1_000_000L}")
-                }
                 val slot = queuedSlotOf(info.presentationTimeUs)
                 val queued = if (slot >= 0) queuedAtNanos[slot] else 0L
                 val heldOverGap = queued in 1 until resumedAtNanos
@@ -1780,10 +1729,6 @@ private class VideoDecoder(
         const val SENDER_PAUSE_NS = 120_000_000L
         // Frames before a pause that wait for it: the decoder holds about two, sometimes three.
         const val PAUSE_HELD_FRAMES = 3
-        // 精简移植：IDR 入队后等待首个解码输出的超时；宽松阈值避免慢解码器误触发恢复。
-        const val KEYFRAME_CONFIRM_TIMEOUT_NS = 500_000_000L
-        // 精简移植：流内 SPS/PPS 与配置 csd 不一致时的恢复限频间隔，避免异常流导致恢复风暴。
-        const val PARAMETER_SET_RECHECK_NS = 10_000_000_000L
         val START_CODE = byteArrayOf(0x00, 0x00, 0x00, 0x01)
     }
 }
