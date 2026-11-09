@@ -2466,7 +2466,8 @@ class DiPlayActivity : Activity(), AppAppearanceOwner {
             val outcome = runCatching {
                 // The cached release can be a day old. Download the newest one.
                 release = latestRelease() ?: throw IOException(getString(R.string.update_up_to_date))
-                val checksumsFile = File(directory, UpdateCatalog.CHECKSUMS_FILE)
+                // 校验文件与 APK 同名，后缀 .sha256
+                val checksumsFile = File(directory, UpdateCatalog.checksumsName(release.apkName))
                 UpdateClient.download(release.checksumsUrl, checksumsFile) { _, _ -> }
                 val apkFile = File(directory, release.apkName)
                 UpdateClient.download(release.apkUrl, apkFile) { written, total ->

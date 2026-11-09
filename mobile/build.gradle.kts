@@ -5,14 +5,14 @@ plugins {
     alias(libs.plugins.kotlin.android)
 }
 
-// 版本号：versionName 沿用上游 mobile；versionCode = 本仓库 git 提交数 + 1
+// 版本号：versionName 沿用上游 mobile；versionCode = 本仓库 git 提交数
 val gitCommitCount: Int = run {
     val process = ProcessBuilder("git", "rev-list", "--count", "HEAD")
         .directory(rootDir)
         .start()
     val output = process.inputStream.readBytes().decodeToString().trim()
     process.waitFor()
-    // 尚无提交时取 0，versionCode 即为 1
+    // 尚无提交时 versionCode 为 0
     output.toIntOrNull() ?: 0
 }
 
@@ -24,7 +24,7 @@ android {
         applicationId = "tech.touka.diplay.freescale"
         minSdk = 19
         targetSdk = 19
-        versionCode = gitCommitCount + 1
+        versionCode = gitCommitCount
         versionName = "0.2.22"
 
         vectorDrawables {

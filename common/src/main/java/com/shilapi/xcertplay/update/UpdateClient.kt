@@ -9,14 +9,17 @@ import java.net.URL
 import java.net.URLConnection
 
 internal object UpdateClient {
+    // 发布仓库：swearl/DiPlay，Release tag 形如 v{versionName}-{versionCode}
     internal const val RELEASES_URL =
-        "https://api.github.com/repos/shihabal3amri/DiPlay/releases?per_page=3"
+        "https://api.github.com/repos/swearl/DiPlay/releases?per_page=3"
     private const val CONNECT_TIMEOUT_MILLIS = 10_000
     private const val READ_TIMEOUT_MILLIS = 30_000
     // Far above the release APKs (under 20 MB at v0.2.21). It stops a body that never ends.
     internal const val MAXIMUM_DOWNLOAD_BYTES = 64L * 1024 * 1024
     private const val MAXIMUM_TEXT_BYTES = 4 * 1024 * 1024
     private const val BUFFER_BYTES = 64 * 1024
+    // 镜像优先的下载前缀，$url 为原始 GitHub 下载链接；最后回退到原始链接
+    private val MIRROR_PREFIXES = listOf("https://ghproxy.net/", "https://gh-proxy.com/")
 
     internal fun fetchText(
         url: String,
@@ -44,6 +47,21 @@ internal object UpdateClient {
     }
 
     internal fun download(url: String, destination: File, onProgress: (Long, Long?) -> Unit) {
+        // 镜像优先：ghproxy.net → gh-proxy.com → 原始链接，任一候选成功即返回；
+        // 单个候选失败时（downloadSingle 内部已删除残留文件）继续尝试下一个，全部失败才抛出最后一个异常
+        var lastFailure: Throwable? = null
+        for (candidate in MIRROR_PREFIXES.map { it + url } + url) {
+            try {
+                downloadSingle(candidate, destination, onProgress)
+                return
+            } catch (failure: Throwable) {
+                lastFailure = failure
+            }
+        }
+        throw lastFailure ?: IOException("Download from $url failed with no attempt")
+    }
+
+    private fun downloadSingle(url: String, destination: File, onProgress: (Long, Long?) -> Unit) {
         destination.parentFile?.mkdirs()
         val connection = URL(url).openConnection() as HttpURLConnection
         try {
