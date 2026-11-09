@@ -36,4 +36,8 @@ kotlin {
 
 dependencies {
     api(project(":shared"))
+    // 更新检查 TLS 栈：独立 Conscrypt + okhttp(OkUrlFactory)，绕开 Android 4.4 系统 HttpsURLConnection 的协议/套件限制
+    implementation(libs.okhttp)
+    implementation(libs.okhttpUrlConnection)
+    implementation(libs.conscrypt)
 }

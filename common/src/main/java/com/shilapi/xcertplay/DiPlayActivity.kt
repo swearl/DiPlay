@@ -291,6 +291,8 @@ class DiPlayActivity : Activity(), AppAppearanceOwner {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // 更新检查的独立 TLS 栈需要上下文读取内置 CA 证书包，必须在任何网络请求前初始化（幂等）
+        UpdateClient.configure(this)
         // Back on the home page finishes this activity while the session runs on, so the icon lands here.
         if (savedInstanceState == null && isLauncherIntent(intent) && CarPlayBackgroundSession.hasSession()) {
             openProjection(); finish(); return

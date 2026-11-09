@@ -31,6 +31,11 @@ android {
             // API 19 无原生 vector 支持，且不引入 appcompat：构建期把 vector 预渲染为 PNG
             generatedDensities?.addAll(listOf("mdpi", "hdpi", "xhdpi", "xxhdpi"))
         }
+
+        ndk {
+            // conscrypt-android AAR 自带多 ABI 原生库，仅在最终 APK 保留 armeabi-v7a
+            abiFilters.add("armeabi-v7a")
+        }
     }
 
     signingConfigs {
@@ -46,9 +51,14 @@ android {
         debug {
             // debug 与 release 均使用飞思卡尔系统签名
             signingConfig = signingConfigs.getByName("freescale")
+            // 新增 TLS 栈依赖后方法数超 64K 且禁止 multidex，启用 R8 仅裁剪（不优化不混淆）
+            isMinifyEnabled = true
+            proguardFiles(getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro")
         }
         release {
-            isMinifyEnabled = false
+            // 同 debug：R8 仅裁剪，规则中 -dontoptimize/-dontobfuscate 保持行为不变
+            isMinifyEnabled = true
+            proguardFiles(getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.getByName("freescale")
         }
     }
