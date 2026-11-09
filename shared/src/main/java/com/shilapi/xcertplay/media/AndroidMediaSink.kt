@@ -993,15 +993,6 @@ private class VideoDecoder(
     private var submittedFrameLogged = false
     private var duplicateConfigLogged = false
     private var failureReports = 0
-    // 精简移植：上次真正 stop/release 一个 codec 的时刻；老 OMX 组件卸载是异步的，
-    // 刚 release 就 create+configure 会以 0x80001001 失败（表现为黑屏），重建前需等待 settle 时间。
-    private var lastCodecReleaseNanos = 0L
-    // 精简移植：configure 连续失败计数与退避到期时刻；失败后指数退避，避免每个 IDR 都立即重建敲打老 OMX。
-    private var configureFailures = 0
-    private var configureBackoffUntilNanos = 0L
-    // 精简移植：IDR 输出确认超时（自适应）：连续超时逐次翻倍（封顶 KEYFRAME_CONFIRM_TIMEOUT_MAX_NS），
-    // 参考链确认成功后重置，避免解码器偏慢的设备陷入无限重建风暴。
-    private var keyframeConfirmTimeoutNs = KEYFRAME_CONFIRM_TIMEOUT_NS
     private val referenceChain = VideoReferenceChain()
     private val backlogRecovery = VideoBacklogRecovery()
     private var lastKeyFrameRequestNs = 0L
@@ -1123,17 +1114,9 @@ private class VideoDecoder(
                         is VideoJob.Resync -> recover("video queue overflow")
                         null -> Unit
                     }
-                    // 精简移植：IDR 入队后长时间无解码输出，老解码器可能已静默丢弃关键帧，重建解码器重新等 IDR。
-                    // 仅在解码器仍存活时判定（重建失败期间由退避机制控制重试节奏）。
-                    if (decoder != null &&
-                        referenceChain.isPendingConfirmation(System.nanoTime(), keyframeConfirmTimeoutNs)
-                    ) {
-                        recover("keyframe output not confirmed within ${keyframeConfirmTimeoutNs / 1_000_000L} ms")
-                        // 恢复后仍无输出说明解码器可能只是偏慢而非丢帧，超时翻倍（上限 4s），确认成功后重置。
-                        if (keyframeConfirmTimeoutNs < KEYFRAME_CONFIRM_TIMEOUT_MAX_NS) {
-                            keyframeConfirmTimeoutNs = minOf(
-                                keyframeConfirmTimeoutNs * 2, KEYFRAME_CONFIRM_TIMEOUT_MAX_NS)
-                        }
+                    // 精简移植：IDR 入队后长时间无解码输出，老解码器可能已静默丢弃关键帧，重建解码器重新等 IDR
+                    if (referenceChain.isPendingConfirmation(System.nanoTime(), KEYFRAME_CONFIRM_TIMEOUT_NS)) {
+                        recover("keyframe output not confirmed within ${KEYFRAME_CONFIRM_TIMEOUT_NS / 1_000_000L} ms")
                     }
                     if (outputThread == null) decoder?.let(::drainOutput)
                     stats.logIfDue()?.let(report)
@@ -1238,13 +1221,6 @@ private class VideoDecoder(
             }
             return
         }
-        // 精简移植：configure 连续失败时指数退避。退避期间仅记录最新配置，等退避到期再重建
-        // （退避期间解码器必然为 null，不影响已成功配置的解码器）。
-        if (System.nanoTime() < configureBackoffUntilNanos) {
-            lastConfig = config
-            referenceChain.reset()
-            return
-        }
         lastConfig = config
         duplicateConfigLogged = false
         releaseDecoder()
@@ -1278,13 +1254,6 @@ private class VideoDecoder(
             MtkDecoderTuning.legacyAcodecDecoderName(mime) != null) maximumMtkMode else MtkDecoderMode.NONE
         var configured: ConfiguredVideoDecoder? = null
         var used: DecoderAttempt? = null
-        // 精简移植：老 OMX（如 OMX.qcom.*）卸载组件是异步的，刚 release 就 create+configure 会以
-        // 0x80001001 失败并表现为黑屏；距上次释放不足 settle 时间时补足等待，仅在确实释放过时付出代价。
-        if (lastCodecReleaseNanos != 0L) {
-            val settleLeftMs = RECREATE_SETTLE_MS -
-                (System.nanoTime() - lastCodecReleaseNanos) / 1_000_000L
-            if (settleLeftMs > 0) Thread.sleep(settleLeftMs)
-        }
         for (attempt in videoDecoderAttempts(
             requestedRate,
             softwareDecoderName(mime),
@@ -1296,20 +1265,7 @@ private class VideoDecoder(
         }
         if (configured == null) {
             queue.discardCurrentChain()
-            // 精简移植：整体失败后启动指数退避（500ms → 1s → 2s → 4s → 8s 封顶），
-            // 成功后清零；期间新 IDR/Config 不再立即重建，避免持续敲打脆弱的老 OMX 服务。
-            configureFailures++
-            val backoffMs = minOf(
-                CONFIGURE_BACKOFF_BASE_MS shl (configureFailures - 1), CONFIGURE_BACKOFF_MAX_MS)
-            configureBackoffUntilNanos = System.nanoTime() + backoffMs * 1_000_000L
-            report("decoder configuration failed mime=$mime size=${width}x$height " +
-                "failures=$configureFailures retryInMs=$backoffMs")
-            Log.w(TAG, "video decoder configure failed; backoff ${backoffMs} ms " +
-                "failures=$configureFailures mime=$mime")
-        } else {
-            // 精简移植：configure 成功，失败计数与退避清零
-            configureFailures = 0
-            configureBackoffUntilNanos = 0L
+            report("decoder configuration failed mime=$mime size=${width}x$height")
         }
         if (nextOperatingRate(requestedRate, used) != requestedRate) dropOperatingRate("refused at configure")
         if (nextLowLatencyDecoder(requestedLowLatency, used) != requestedLowLatency) {
@@ -1681,8 +1637,6 @@ private class VideoDecoder(
                 val confirmedAt = referenceChain.takePendingConfirmation(now)
                 if (confirmedAt != 0L) {
                     Log.i(TAG, "video decoder keyframe confirmed latencyMs=${(now - confirmedAt) / 1_000_000L}")
-                    // 精简移植：参考链确认成功，确认超时恢复默认值
-                    keyframeConfirmTimeoutNs = KEYFRAME_CONFIRM_TIMEOUT_NS
                 }
                 val slot = queuedSlotOf(info.presentationTimeUs)
                 val queued = if (slot >= 0) queuedAtNanos[slot] else 0L
@@ -1758,8 +1712,7 @@ private class VideoDecoder(
     private fun inputBuffersOf(codec: MediaCodec): Array<ByteBuffer?> =
         cachedInputBuffers ?: codec.inputBuffers.also { cachedInputBuffers = it }
 
-    /** 精简移植：释放当前解码器；返回是否真的 stop/release 了一个 codec（供重建前 settle 等待判断）。 */
-    private fun releaseDecoder(): Boolean {
+    private fun releaseDecoder() {
         backlogRecovery.reset()
         val codec: MediaCodec?
         synchronized(outputLock) {
@@ -1783,11 +1736,7 @@ private class VideoDecoder(
             } catch (_: Exception) {
                 // Best effort.
             }
-            // 精简移植：记录释放时刻，供 configureDecoder 重建前等待老 OMX 完成异步卸载
-            lastCodecReleaseNanos = System.nanoTime()
-            return true
         }
-        return false
     }
 
     /** Waits, holding [outputLock], until the output thread no longer waits on [codec]; keeps an interrupt. */
@@ -1831,17 +1780,10 @@ private class VideoDecoder(
         const val SENDER_PAUSE_NS = 120_000_000L
         // Frames before a pause that wait for it: the decoder holds about two, sometimes three.
         const val PAUSE_HELD_FRAMES = 3
-        // 精简移植：IDR 入队后等待首个解码输出的超时（初始值）；宽松阈值避免慢解码器误触发恢复。
+        // 精简移植：IDR 入队后等待首个解码输出的超时；宽松阈值避免慢解码器误触发恢复。
         const val KEYFRAME_CONFIRM_TIMEOUT_NS = 500_000_000L
-        // 精简移植：确认超时自适应翻倍的封顶值，避免解码器偏慢的设备陷入无限重建风暴。
-        const val KEYFRAME_CONFIRM_TIMEOUT_MAX_NS = 4_000_000_000L
         // 精简移植：流内 SPS/PPS 与配置 csd 不一致时的恢复限频间隔，避免异常流导致恢复风暴。
         const val PARAMETER_SET_RECHECK_NS = 10_000_000_000L
-        // 精简移植：释放 codec 后等待老 OMX 组件完成异步卸载的时间；不足该时间就重建会 0x80001001 失败。
-        const val RECREATE_SETTLE_MS = 100L
-        // 精简移植：configure 连续失败的指数退避基数（500ms 起步）与上限（8s）。
-        const val CONFIGURE_BACKOFF_BASE_MS = 500L
-        const val CONFIGURE_BACKOFF_MAX_MS = 8_000L
         val START_CODE = byteArrayOf(0x00, 0x00, 0x00, 0x01)
     }
 }
