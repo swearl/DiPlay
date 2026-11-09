@@ -40,10 +40,17 @@ android {
 
     signingConfigs {
         create("freescale") {
-            storeFile = file("D:/AndroidStudioProjects/keystore/mykeys.keystore")
-            storePassword = "12345678"
-            keyAlias = "freescale"
-            keyPassword = "12345678"
+            // 签名凭据优先取环境变量（与上游 mobile 一致），未设置时回退到本地飞思卡尔签名
+            storeFile = file(
+                providers.environmentVariable("ANDROID_KEYSTORE_PATH")
+                    .getOrElse("D:/AndroidStudioProjects/keystore/mykeys.keystore"),
+            )
+            storePassword = providers.environmentVariable("ANDROID_KEYSTORE_PASSWORD")
+                .getOrElse("12345678")
+            keyAlias = providers.environmentVariable("ANDROID_KEY_ALIAS")
+                .getOrElse("freescale")
+            keyPassword = providers.environmentVariable("ANDROID_KEY_PASSWORD")
+                .getOrElse("12345678")
         }
     }
 
