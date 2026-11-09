@@ -162,13 +162,15 @@ internal object UpdateClient {
         appContext = context.applicationContext
     }
 
-    private fun open(url: URL): URLConnection = try {
+    // internal：UpdateReleaseLookup 的默认 openConnection 需要委托本函数走新 TLS 栈
+    internal fun open(url: URL): URLConnection = try {
         // OkUrlFactory 走独立 okhttp3 栈：显式 TLS 1.2 ConnectionSpec，
         // 完全绕开系统 HttpsURLConnection 的协议/套件限制
         legacyHttp.open(url)
-    } catch (unused: Exception) {
-        // 防御性回退：未 configure 时退回系统栈（会复现握手失败，仅避免崩溃）
-        android.util.Log.w("DiPlay-Update", "UpdateClient.configure not called; using system TLS stack")
+    } catch (failure: Exception) {
+        // 防御性回退：未 configure 时退回系统栈（会复现握手失败，仅避免崩溃）；
+        // 记录完整异常堆栈，避免 TLS 栈初始化失败被静默吞掉难以排查
+        android.util.Log.w("DiPlay-Update", "Update TLS stack unavailable, falling back to system stack", failure)
         url.openConnection()
     }
 

@@ -40,17 +40,15 @@ android {
 
     signingConfigs {
         create("freescale") {
-            // 签名凭据优先取环境变量（与上游 mobile 一致），未设置时回退到本地飞思卡尔签名
+            // 签名凭据仅取环境变量（与上游 mobile 一致），不提供默认值：
+            // 缺失时 keystore 指向不存在的文件、密码为空，签名任务直接报错
             storeFile = file(
                 providers.environmentVariable("ANDROID_KEYSTORE_PATH")
-                    .getOrElse("D:/AndroidStudioProjects/keystore/mykeys.keystore"),
+                    .getOrElse("missing-release-keystore.jks"),
             )
-            storePassword = providers.environmentVariable("ANDROID_KEYSTORE_PASSWORD")
-                .getOrElse("12345678")
-            keyAlias = providers.environmentVariable("ANDROID_KEY_ALIAS")
-                .getOrElse("freescale")
-            keyPassword = providers.environmentVariable("ANDROID_KEY_PASSWORD")
-                .getOrElse("12345678")
+            storePassword = providers.environmentVariable("ANDROID_KEYSTORE_PASSWORD").getOrElse("")
+            keyAlias = providers.environmentVariable("ANDROID_KEY_ALIAS").getOrElse("")
+            keyPassword = providers.environmentVariable("ANDROID_KEY_PASSWORD").getOrElse("")
         }
     }
 

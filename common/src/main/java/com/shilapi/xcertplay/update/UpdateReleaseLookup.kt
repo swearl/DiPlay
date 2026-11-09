@@ -7,7 +7,9 @@ internal object UpdateReleaseLookup {
     fun latest(
         installedVersion: String,
         userAgent: String,
-        openConnection: (URL) -> URLConnection = { it.openConnection() },
+        // 默认必须委托 UpdateClient 的新 TLS 栈（内置 Conscrypt + OkUrlFactory），
+    // 不能用系统 it.openConnection()——Android 4.4 系统栈缺 AEAD 套件必握手失败
+    openConnection: (URL) -> URLConnection = { UpdateClient.open(it) },
     ): UpdateRelease? {
         // 第一步：镜像优先抓 latest 页，取最新 tag（Android 4.4 无法直连 GitHub，镜像回退直连）
         val html = UpdateClient.fetchTextMirrored(
