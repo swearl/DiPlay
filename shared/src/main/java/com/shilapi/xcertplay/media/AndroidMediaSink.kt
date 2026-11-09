@@ -286,7 +286,6 @@ class AndroidMediaSink(
     private val audioModeLock = Any()
     private var communicationModeStream: AudioStreamId? = null
     private var callSpeaker: CallSpeaker? = null // guarded by audioModeLock
-    private var earpieceFallbackTried = false // guarded by audioModeLock
     private val pendingVideoCodec = ConcurrentHashMap<Int, VideoCodec>()
     private val videoRecoveryHandlers = ConcurrentHashMap<Int, () -> Unit>()
     private val videoDiagnosticHandlers = ConcurrentHashMap<Int, (String) -> Unit>()
@@ -616,7 +615,6 @@ class AndroidMediaSink(
             val before = manager.mode
             manager.mode = AudioManager.MODE_IN_COMMUNICATION
             communicationModeStream = id
-            earpieceFallbackTried = false
             val speakerRequested = runCatching(callSpeakerphone).getOrDefault(false)
             if (speakerRequested) callSpeaker = CallSpeaker.on(manager)
             Log.i("xcertplay-usb", "audio mode $before -> ${manager.mode} for telephony stream=$id")
@@ -631,22 +629,7 @@ class AndroidMediaSink(
         }
     }
 
-    /**
-     * A head unit built on a phone chip plays communication audio on an earpiece, which nobody hears in a car: the
-     * Podofo SM4250 in #782 routed a whole call there (`routeType=1`), and the navigation prompts during it. BYD
-     * head units route calls to the loudspeaker (`routeType=2`) and never get here. Once a call's track is routed
-     * to the earpiece, the call moves to the loudspeaker as **Calls on the loudspeaker** would, once per call.
-     */
-    private fun moveCallToLoudspeaker(id: AudioStreamId) {
-        val manager = audioManager ?: return
-        val line = synchronized(audioModeLock) {
-            if (communicationModeStream != id || callSpeaker != null || earpieceFallbackTried) return
-            earpieceFallbackTried = true
-            callSpeaker = CallSpeaker.on(manager)
-            "Audio: call routed to the earpiece; loudspeaker=${callSpeaker != null} stream=$id"
-        }
-        runCatching { onAudioDiagnostic(line) }
-    }
+    // 精简移植：moveCallToLoudspeaker 已删除——API 19 无 AudioRouting 路由监听，onRoutedToEarpiece 回调永不触发。
 
     private fun restoreAudioMode(id: AudioStreamId?) {
         val manager = audioManager ?: return
@@ -773,7 +756,6 @@ class AndroidMediaSink(
             voiceFilter = callVoiceFilter && format.audioType == TELEPHONY_AUDIO_TYPE,
         ).also {
             it.setNavigationAttenuationDb(navigationAttenuationDb)
-            if (format.audioType == TELEPHONY_AUDIO_TYPE) it.onRoutedToEarpiece = { moveCallToLoudspeaker(id) }
             audioRenderers[id] = it
             // Cover a Settings change made while this renderer was being prepared.
             it.setNavigationAttenuationDb(navigationAttenuationDb)
@@ -1831,8 +1813,6 @@ private class AudioRenderer(
     private var headAtPlaybackStart = 0
     private var droppedAtLastTrim = 0
     private var clockTrim: MediaClockTrim? = null
-    /** Called when this call's track is routed to the earpiece; the sink moves the call to the loudspeaker. */
-    @Volatile var onRoutedToEarpiece: (() -> Unit)? = null
     private var lastPcmWriteNs = 0L
     private var rebufferCount = 0
     private var rebufferPauseReportCount = 0

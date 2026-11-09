@@ -26,19 +26,7 @@ internal fun carPlaySizeChoices(context: Context, savedMillimeters: Int): List<C
     return presets + custom
 }
 
-internal fun DiLink51ClusterLayout.Theme.localizedLabel(context: Context): String = context.getString(when (this) {
-    DiLink51ClusterLayout.Theme.SCENARIO -> R.string.option_theme_scenario
-    DiLink51ClusterLayout.Theme.MAP -> R.string.option_theme_map
-    DiLink51ClusterLayout.Theme.SIMPLE -> R.string.option_theme_simple
-})
-
-internal fun DiLink51ClusterLayout.Contrast.localizedLabel(context: Context): String = context.getString(when (this) {
-    DiLink51ClusterLayout.Contrast.DEFAULT -> R.string.option_contrast_default
-    DiLink51ClusterLayout.Contrast.LIGHT -> R.string.option_contrast_light
-    DiLink51ClusterLayout.Contrast.DARK -> R.string.option_contrast_dark
-})
-
-// 精简移植：BydClusterNaviMode / BydOemClusterHold 的本地化标签已随 BYD 仪表功能删除
+// 精简移植：BydClusterNaviMode / BydOemClusterHold / DiLink51 主题与对比度的本地化标签已随仪表功能删除
 
 internal fun EvChargingConnectors.localizedLabel(context: Context): String = context.getString(when (this) {
     EvChargingConnectors.CCS2_TYPE2 -> R.string.connectors_ccs2_type2

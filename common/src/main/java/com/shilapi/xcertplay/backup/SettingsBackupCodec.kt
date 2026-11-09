@@ -34,7 +34,8 @@ object SettingsBackupCodec {
         "speech_without_8_16_khz", "car_bluetooth_audio", "call_echo_cancellation", "call_voice_filter",
         "call_speakerphone",
         "smooth_video", "direct_video_output", "low_latency_decoder", "mtk_decoder_tuning", "fps_counter",
-        "adb_cluster_activity_enabled", "platform21_cluster_enabled", "center_map_overlay", "center_map_auto_hide",
+        // 精简移植：仪表投影相关键（adb_cluster_activity_enabled/platform21_cluster_enabled 等）已随功能删除
+        "center_map_overlay",
         "center_map_follows_dashboard", "settings_gesture_fingers", "display_width_physical_mm",
         "display_physical_size_basis", "right_hand_drive", "hide_top_bar", "hide_bottom_bar",
         "temporary_system_bars",
@@ -45,8 +46,8 @@ object SettingsBackupCodec {
         "bt_suspend_delay_seconds", "location_reporting_enabled", "external_controller", "usb_charging_current",
     )
 
-    /** Families of layout settings with many keys and nothing sensitive in them. */
-    private val AIRPLAY_PREFIXES = listOf("cluster_", "carplay_night_")
+    /** Families of layout settings with many keys and nothing sensitive in them. 精简移植：cluster_ 前缀族已随仪表功能删除。 */
+    private val AIRPLAY_PREFIXES = listOf("carplay_night_")
     private val DIPLAY_KEYS = setOf(
         "auto_connect",
         "connect_on_phone_bluetooth",

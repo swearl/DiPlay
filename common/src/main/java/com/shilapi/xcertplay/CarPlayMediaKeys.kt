@@ -2,27 +2,17 @@ package com.shilapi.xcertplay
 
 import android.content.Context
 import android.content.Intent
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.graphics.Canvas
-import android.graphics.Paint
-import android.graphics.Rect
 import android.media.AudioAttributes
 import android.media.AudioManager
 import android.os.Handler
 import android.os.Looper
-import android.os.SystemClock
 import android.util.Log
 import android.view.KeyEvent
 import com.shilapi.xcertplay.airplay.CarPlayMediaButton
 import com.shilapi.xcertplay.compat.AudioAttributesCompat
 import com.shilapi.xcertplay.compat.AudioFocusRequestCompat
-import com.shilapi.xcertplay.host.R
 import com.shilapi.xcertplay.media.CarPlayNowPlaying
 import com.shilapi.xcertplay.orchestration.CarPlayController
-import java.util.concurrent.Executors
-import java.util.concurrent.Executor
-import kotlin.math.roundToInt
 
 /**
  * Steering-wheel and other hardware media buttons for CarPlay.
@@ -36,19 +26,6 @@ internal object CarPlayMediaKeys {
     private const val TAG = "DiPlay-MediaKeys"
 
     private val mainHandler = Handler(Looper.getMainLooper())
-    private val artworkQueue = NowPlayingArtworkQueue(
-        worker = Executors.newSingleThreadExecutor { task ->
-            Thread(task, "diplay-now-playing-artwork").apply { isDaemon = true }
-        },
-        main = Executor { mainHandler.post(it) },
-        decode = ::decodeAmbientArtwork,
-        publish = ::onArtworkDecoded,
-        discard = { it.bitmap.recycle() },
-    )
-    private var artworkOwner: Any? = null
-    private val ambientColorCache = LinkedHashMap<Int, Int?>()
-    private var initialAlbumRecovery = InitialAlbumRecovery()
-    private var initialAlbumRetry: Runnable? = null
     private var controller: CarPlayController? = null
     private var focusRequest: AudioFocusRequestCompat? = null
     private var focusOwner: Any? = null
@@ -60,17 +37,10 @@ internal object CarPlayMediaKeys {
     private var mediaAudioActive = false
     private var mediaKeysStarted = false
     private var nowPlaying = CarPlayNowPlaying()
-    private var elapsedUpdatedAt = 0L
-    private var artwork: Bitmap? = null
-    private val artworkCache = LinkedHashMap<Int, Bitmap?>()
-    private var placeholder: Bitmap? = null
 
     @Synchronized
     fun attach(context: Context, next: CarPlayController) {
-        if (controller !== next) {
-            releaseLocked()
-            artworkOwner = artworkQueue.newSession()
-        }
+        if (controller !== next) releaseLocked()
         appContext = context.applicationContext
         controller = next
         // 精简移植：GeelyWheelKeys 与 AmbientMusicController（氛围灯播放联动）已删除
@@ -78,10 +48,7 @@ internal object CarPlayMediaKeys {
             onIphonePlaying(next, playing)
         }
         next.nowPlayingListener = { _ -> onNowPlayingChanged(next) }
-        next.artworkListener = { id, bytes -> onArtworkChanged(next, id, bytes) }
-        val retained = next.nowPlayingSnapshot()
         onNowPlayingChanged(next)
-        next.matchingArtworkSnapshot(retained.artworkTransferId)?.let { onArtworkChanged(next, it.id, it.bytes) }
     }
 
     /** Ends key handling for [expected]; a newer controller's state is left alone. */
@@ -90,18 +57,20 @@ internal object CarPlayMediaKeys {
         if (expected == null || controller !== expected) return
         expected.playbackListener = null
         expected.nowPlayingListener = null
-        expected.artworkListener = null
         controller = null
         releaseLocked()
     }
 
     /** Called when CarPlay music starts or stops; may run on any thread. */
     fun onMediaAudioChanged(active: Boolean) {
+        Log.i(TAG, "media audio active=$active")
         mainHandler.post { synchronized(this) { updateLocked(active) } }
     }
 
     /** The iPhone started or stopped playing; may run on any thread. */
     private fun onIphonePlaying(expected: CarPlayController, playing: Boolean) {
+        // 音乐播放态回调日志：仅在状态变化时触发（由 CarPlayController 去重），直接输出即可
+        Log.i(TAG, "playback playing=$playing")
         if (playing) mainHandler.post {
             synchronized(this) {
                 if (controller === expected) regainFocusLocked(onIphonePlaybackResume = true)
@@ -109,140 +78,21 @@ internal object CarPlayMediaKeys {
         }
     }
 
-    /** Publishes the iPhone's retained metadata through Android's system media session. */
+    /** 处理 iPhone 元数据回调；API 19 无系统媒体会话，仅保留状态记录与回调日志。 */
     private fun onNowPlayingChanged(expected: CarPlayController) {
         mainHandler.post {
             synchronized(this) {
                 if (controller !== expected) return@synchronized
                 // Resolve retained state at delivery: a queued callback cannot roll a replay back.
                 val update = expected.nowPlayingSnapshot()
-                val previousArtwork = artwork
-                if (albumTrackChanged(nowPlaying, update)) {
-                    val previousId = nowPlaying.artworkTransferId
-                    if (previousId != null) {
-                        ambientColorCache.remove(previousId)
-                        if (previousId != update.artworkTransferId) artworkCache.remove(previousId)
-                    }
-                    if (previousId == update.artworkTransferId) {
-                        // Metadata can arrive after its artwork. Keep the connection's decode token;
-                        // cancelling it here loses a valid in-flight cover for a reused reference.
-                        initialAlbumRecovery = InitialAlbumRecovery()
-                    }
-                    artwork = nextArtwork(update.artworkTransferId, artworkCache, artwork)
-                }
-                if (nowPlaying.elapsedMillis != update.elapsedMillis) elapsedUpdatedAt = SystemClock.elapsedRealtime()
-                val metadataChanged = metadataChanged(nowPlaying, update) || artwork !== previousArtwork
+                val changed = metadataChanged(nowPlaying, update)
                 nowPlaying = update
-                if (metadataChanged) ClusterMusicState.publish(update, artwork)
-                updateInitialAlbumRecovery(expected)
-                // API 19 无 MediaSession（API 21），元数据与播放态不再发布到系统媒体会话
-                publishPlaybackStateLocked()
+                // 音乐元数据回调日志：进度更新不打印，仅歌名/歌手等元数据变化时输出，避免刷屏
+                if (changed) Log.i(TAG,
+                    "now playing title=${update.title ?: "-"} artist=${update.artist ?: "-"} " +
+                        "album=${update.album ?: "-"} app=${update.sourceApp ?: "-"} playing=${update.playing}")
             }
         }
-    }
-
-    @Synchronized
-    private fun onArtworkChanged(expected: CarPlayController, id: Int, bytes: ByteArray) {
-        if (controller !== expected) return
-        artworkOwner?.let { artworkQueue.submit(it, id, bytes) }
-    }
-
-    @Synchronized
-    private fun onArtworkDecoded(expected: Any, id: Int, result: AmbientArtwork?) {
-        val decoded = result?.bitmap
-        if (artworkOwner !== expected) {
-            decoded?.recycle()
-            return
-        }
-        // Empty/corrupt transfers are not a request to clear a valid cover. Session teardown
-        // clears the image explicitly. Keep recovery eligible when decoding has failed.
-        if (decoded == null) {
-            Log.i(TAG, "artwork decode failed reference=$id; retaining cover")
-            controller?.let(::updateInitialAlbumRecovery)
-            return
-        }
-        artworkCache.remove(id)
-        artworkCache[id] = decoded
-        ambientColorCache.remove(id)
-        ambientColorCache[id] = result?.color
-        while (ambientColorCache.size > MAX_CACHED_ARTWORK) ambientColorCache.remove(ambientColorCache.keys.first())
-        while (artworkCache.size > MAX_CACHED_ARTWORK) artworkCache.remove(artworkCache.keys.first())
-        if (nowPlaying.artworkTransferId == id) {
-            artwork = decoded
-            ClusterMusicState.publish(nowPlaying, artwork)
-            controller?.let(::updateInitialAlbumRecovery)
-        }
-    }
-
-    private fun hasCurrentAlbumColor(): Boolean =
-        nowPlaying.artworkTransferId?.let { ambientColorCache.containsKey(it) } == true
-
-    private fun albumRecoveryEnabled(): Boolean {
-        val context = appContext ?: return false
-        // 精简移植：AmbientMusicSettings（氛围灯取色）已删除，仅按仪表音乐卡设置判断
-        return ClusterMusicSettings.enabled(context)
-    }
-
-    private fun logAlbumRecoveryEvents(recovery: InitialAlbumRecovery) {
-        for (event in recovery.takeEvents()) Log.i(TAG, "album recovery=$event")
-        if (!recovery.timerPending) {
-            initialAlbumRetry?.let(mainHandler::removeCallbacks)
-            initialAlbumRetry = null
-        }
-    }
-
-    private fun updateInitialAlbumRecovery(expected: CarPlayController) {
-        val recovery = initialAlbumRecovery
-        val schedule = recovery.observe(nowPlaying, hasCurrentAlbumColor(), ::albumRecoveryEnabled)
-        logAlbumRecoveryEvents(recovery)
-        if (!schedule) return
-        initialAlbumRetry?.let(mainHandler::removeCallbacks)
-        initialAlbumRetry = null
-        val token = recovery.pendingToken
-        Log.i(TAG, "album recovery=scheduled reference=${nowPlaying.artworkTransferId}")
-        val retry = Runnable {
-            synchronized(this) {
-                if (controller !== expected || initialAlbumRecovery !== recovery) return@Runnable
-                val begin = recovery.beginRequest(token, nowPlaying, hasCurrentAlbumColor(), ::albumRecoveryEnabled)
-                logAlbumRecoveryEvents(recovery)
-                if (!begin) return@Runnable
-                artworkQueue.execute(Runnable { expected.refreshInitialNowPlaying(
-                    stillNeeded = {
-                        synchronized(this) {
-                            val needed = controller === expected && initialAlbumRecovery === recovery &&
-                                recovery.stillNeeded(token, nowPlaying, hasCurrentAlbumColor(), ::albumRecoveryEnabled)
-                            if (initialAlbumRecovery === recovery) logAlbumRecoveryEvents(recovery)
-                            needed
-                        }
-                    },
-                    beforeSend = {
-                        synchronized(this) {
-                            val claimed = controller === expected && initialAlbumRecovery === recovery &&
-                                recovery.claimSend(token, nowPlaying, hasCurrentAlbumColor(), ::albumRecoveryEnabled)
-                            if (initialAlbumRecovery === recovery) logAlbumRecoveryEvents(recovery)
-                            if (claimed) Log.i(TAG, "album recovery=requested reference=${nowPlaying.artworkTransferId}")
-                            claimed
-                        }
-                    },
-                    onFinished = { result ->
-                        synchronized(this) {
-                            if (controller === expected && initialAlbumRecovery === recovery) {
-                                recovery.finished(token)
-                                val state = when (result) {
-                                    CarPlayController.InitialAlbumRefreshResult.SENT -> "sent"
-                                    CarPlayController.InitialAlbumRefreshResult.FAILED -> "failed"
-                                    else -> "skipped reason=${result.name.lowercase()}"
-                                }
-                                Log.i(TAG, "album recovery=$state")
-                                logAlbumRecoveryEvents(recovery)
-                            }
-                        }
-                    },
-                ) })
-            }
-        }
-        initialAlbumRetry = retry
-        mainHandler.postDelayed(retry, 2000)
     }
 
     // Another car app (its own Spotify, the radio) took audio focus and with it the steering-wheel
@@ -271,7 +121,6 @@ internal object CarPlayMediaKeys {
         mediaAudioActive = active
         // API 19 无 MediaSession：以 started 标志代替原先"session == null"的首次启动判断
         if (active && !mediaKeysStarted) { mediaKeysStarted = true; start(context) } else if (active) regainFocusLocked()
-        publishPlaybackStateLocked()
     }
 
     private fun start(context: Context) {
@@ -350,26 +199,14 @@ internal object CarPlayMediaKeys {
 
     private fun releaseLocked() {
         focusOwner = null
-        artworkOwner = null
-        initialAlbumRetry?.let(mainHandler::removeCallbacks)
-        initialAlbumRetry = null
-        initialAlbumRecovery = InitialAlbumRecovery()
-        ambientColorCache.clear()
-        artworkQueue.clear()
         mediaAudioActive = false
         mediaKeysStarted = false
         nowPlaying = CarPlayNowPlaying()
-        artwork = null
-        artworkCache.clear()
-        ClusterMusicState.publish(CarPlayNowPlaying(), null)
         focusRequest?.let { request -> (appContext?.getSystemService(Context.AUDIO_SERVICE) as? AudioManager)?.let(request::abandon) }
         focusRequest = null
         focusHeld = false
         transientFocusInterrupted = false
     }
-
-    // API 19 无 MediaSession/PlaybackState（API 21）：播放态不再发布到系统媒体会话
-    private fun publishPlaybackStateLocked() = Unit
 
     private fun send(index: Int, source: String) {
         // While the car's video player is on screen the wheel drives it: a CarPlay play/pause would
@@ -399,89 +236,8 @@ internal object CarPlayMediaKeys {
     }
 
     /** Whether [next] changes what the media session's metadata shows; position and play state do not. */
-    internal fun metadataChanged(previous: CarPlayNowPlaying, next: CarPlayNowPlaying): Boolean =
+    private fun metadataChanged(previous: CarPlayNowPlaying, next: CarPlayNowPlaying): Boolean =
         previous.copy(elapsedMillis = null, playing = false) != next.copy(elapsedMillis = null, playing = false)
-
-    // Without art the car draws DiPlay's bright launcher icon instead.
-    private fun shownArtworkLocked(): Bitmap? =
-        artwork ?: placeholder ?: appContext?.let(::placeholderArt)?.also { placeholder = it }
-
-    internal fun placeholderArt(context: Context): Bitmap? {
-        // 精简移植：androidx.core 的 toBitmap 已移除，手动把 Drawable 绘制到位图
-        @Suppress("DEPRECATION")
-        val drawable = context.resources.getDrawable(R.drawable.art_now_playing_placeholder) ?: return null
-        val width = MAX_ARTWORK_DIMENSION
-        val height = MAX_ARTWORK_DIMENSION
-        if (drawable.intrinsicWidth <= 0 || drawable.intrinsicHeight <= 0) return null
-        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(bitmap)
-        drawable.setBounds(0, 0, width, height)
-        drawable.draw(canvas)
-        return bitmap
-    }
-
-    /**
-     * The art to show once the iPhone names transfer [id]. A pending transfer keeps [current], so the
-     * placeholder does not flash between tracks.
-     */
-    internal fun nextArtwork(id: Int?, cache: Map<Int, Bitmap?>, current: Bitmap?): Bitmap? = when {
-        id == null -> null
-        cache.containsKey(id) -> cache[id]
-        else -> current
-    }
-
-    private data class AmbientArtwork(val bitmap: Bitmap, val color: Int?)
-
-    private fun decodeAmbientArtwork(bytes: ByteArray): AmbientArtwork? {
-        // 精简移植：AmbientAlbumPalette（氛围灯取色）已删除，仅解码封面，颜色恒为 null
-        val bitmap = decodeArtwork(bytes) ?: return null
-        return AmbientArtwork(bitmap, null)
-    }
-
-    private fun decodeArtwork(bytes: ByteArray): Bitmap? {
-        if (bytes.isEmpty()) return null
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-        if (bounds.outWidth !in 1..MAX_ARTWORK_SOURCE_DIMENSION ||
-            bounds.outHeight !in 1..MAX_ARTWORK_SOURCE_DIMENSION
-        ) return null
-        var sample = 1
-        while (maxOf(bounds.outWidth, bounds.outHeight) / sample > MAX_ARTWORK_DIMENSION * 2) sample *= 2
-        val decoded = BitmapFactory.decodeByteArray(
-            bytes,
-            0,
-            bytes.size,
-            BitmapFactory.Options().apply { inSampleSize = sample },
-        ) ?: return null
-        return squareArtwork(decoded).also { square -> if (square !== decoded) decoded.recycle() }
-    }
-
-    /**
-     * Fits [source] inside a transparent square of at most [MAX_ARTWORK_DIMENSION]. Car clusters draw
-     * art in a square box and stretch it, so 16:9 video thumbnails looked squashed.
-     */
-    internal fun squareArtwork(source: Bitmap): Bitmap {
-        val largest = maxOf(source.width, source.height)
-        if (source.width == source.height && largest <= MAX_ARTWORK_DIMENSION) return source
-        val side = minOf(largest, MAX_ARTWORK_DIMENSION)
-        val scale = side.toFloat() / largest
-        val width = (source.width * scale).roundToInt().coerceAtLeast(1)
-        val height = (source.height * scale).roundToInt().coerceAtLeast(1)
-        val left = (side - width) / 2
-        val top = (side - height) / 2
-        return Bitmap.createBitmap(side, side, Bitmap.Config.ARGB_8888).also { square ->
-            Canvas(square).drawBitmap(
-                source,
-                null,
-                Rect(left, top, left + width, top + height),
-                Paint(Paint.FILTER_BITMAP_FLAG),
-            )
-        }
-    }
-
-    private const val MAX_ARTWORK_DIMENSION = 384
-    private const val MAX_ARTWORK_SOURCE_DIMENSION = 8_192
-    private const val MAX_CACHED_ARTWORK = 4
 }
 
 /**

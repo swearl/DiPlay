@@ -71,12 +71,22 @@ object CarPlayGlance {
             }
             publishLocked()
         }
+        // 导航回调日志：0x5201/0x5202 路由帧在快照变化时输出一次（与快照分发共用去重），避免高频帧刷屏
+        if (frame.messageId == HudRouteState.ROUTE_GUIDANCE_UPDATE ||
+            frame.messageId == HudRouteState.ROUTE_GUIDANCE_MANEUVER_UPDATE) {
+            changed?.let { snapshot ->
+                android.util.Log.i(TAG, "0x52 route type=${snapshot.maneuverType} road=${snapshot.road} " +
+                    "dist=${snapshot.distanceMeters}m remaining=${snapshot.remainingSeconds}s/${snapshot.remainingMeters}m")
+            }
+        }
         changed?.let { listener?.invoke(it) }
     }
 
     fun setConnected(next: Boolean) {
         val changed = synchronized(this) {
             if (connected == next) return
+            // 导航连接状态回调日志
+            android.util.Log.i(TAG, "connected=$next")
             connected = next
             if (!next) {
                 route.clear()
