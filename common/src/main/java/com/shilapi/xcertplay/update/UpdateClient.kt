@@ -7,6 +7,10 @@ import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLConnection
+import javax.net.ssl.HttpsURLConnection
+import javax.net.ssl.SSLContext
+import javax.net.ssl.SSLSocket
+import javax.net.ssl.SSLSocketFactory
 
 internal object UpdateClient {
     // 发布仓库：swearl/DiPlay，Release tag 形如 v{versionName}-{versionCode}
@@ -29,6 +33,7 @@ internal object UpdateClient {
     ): String {
         val connection = openConnection(URL(url)) as? HttpURLConnection
             ?: throw IOException("Request to $url did not open an HTTP connection")
+        applyTls12(connection)
         try {
             connection.requestMethod = "GET"
             connection.connectTimeout = CONNECT_TIMEOUT_MILLIS
@@ -64,6 +69,7 @@ internal object UpdateClient {
     private fun downloadSingle(url: String, destination: File, onProgress: (Long, Long?) -> Unit) {
         destination.parentFile?.mkdirs()
         val connection = URL(url).openConnection() as HttpURLConnection
+        applyTls12(connection)
         try {
             connection.connectTimeout = CONNECT_TIMEOUT_MILLIS
             connection.readTimeout = READ_TIMEOUT_MILLIS
@@ -108,5 +114,60 @@ internal object UpdateClient {
             output.write(buffer, 0, read)
         }
         return output.toString("UTF-8")
+    }
+
+    // Android 4.4 (API 19) 的 HttpURLConnection 默认启用协议不含 TLSv1.2，
+    // 而 GitHub API 与下载镜像均要求 TLS 1.2+，会导致 SSL handshake aborted。
+    // "TLSv1.2" SSLContext 自 API 16 起可用，统一无条件启用即可，无需版本判断。
+    private fun applyTls12(connection: HttpURLConnection) {
+        if (connection !is HttpsURLConnection) return
+        try {
+            val context = SSLContext.getInstance("TLSv1.2")
+            // init 传 null 时沿用系统默认信任库与随机源，证书校验行为不变
+            context.init(null, null, null)
+            connection.sslSocketFactory = Tls12SocketFactory(context.socketFactory)
+        } catch (ignored: Exception) {
+            // 无法创建 TLSv1.2 上下文时保持默认工厂，交由原有握手逻辑报错
+        }
+    }
+
+    // 委托系统默认 SSLSocketFactory，并在每个新建 socket 上强制启用 TLSv1.2
+    // （同时保留设备已支持的旧协议，避免仅剩 TLSv1.2 导致极端设备不可用）
+    private class Tls12SocketFactory(private val delegate: SSLSocketFactory) : SSLSocketFactory() {
+        override fun getDefaultCipherSuites(): Array<String> = delegate.defaultCipherSuites
+        override fun getSupportedCipherSuites(): Array<String> = delegate.supportedCipherSuites
+
+        private fun patch(socket: SSLSocket): SSLSocket {
+            val enabled = socket.enabledProtocols
+            if ("TLSv1.2" !in enabled && "TLSv1.2" in socket.supportedProtocols) {
+                socket.enabledProtocols = enabled + "TLSv1.2"
+            }
+            return socket
+        }
+
+        override fun createSocket(s: java.net.Socket, host: String, port: Int, autoClose: Boolean) =
+            (delegate.createSocket(s, host, port, autoClose) as SSLSocket).let(::patch)
+
+        override fun createSocket(host: String, port: Int) =
+            (delegate.createSocket(host, port) as SSLSocket).let(::patch)
+
+        override fun createSocket(
+            host: String,
+            port: Int,
+            localHost: java.net.InetAddress,
+            localPort: Int,
+        ) = (delegate.createSocket(host, port, localHost, localPort) as SSLSocket).let(::patch)
+
+        override fun createSocket(
+            host: java.net.InetAddress,
+            port: Int,
+        ) = (delegate.createSocket(host, port) as SSLSocket).let(::patch)
+
+        override fun createSocket(
+            address: java.net.InetAddress,
+            port: Int,
+            localAddress: java.net.InetAddress,
+            localPort: Int,
+        ) = (delegate.createSocket(address, port, localAddress, localPort) as SSLSocket).let(::patch)
     }
 }

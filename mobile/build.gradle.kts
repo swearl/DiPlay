@@ -77,7 +77,7 @@ kotlin {
     }
 }
 
-// 输出文件命名：DiPlay-Freescale-<versionName>-<versionCode>.apk（按 AGENTS.md 仅编译 debug，不带构建类型后缀）
+// 输出文件命名：DiPlay-Freescale-<versionName>-<versionCode>.apk（debug/release 分别输出在各自 variant 目录，复制到 dist 时再加构建类型后缀）
 android.applicationVariants.all {
     outputs.all {
         val output = this as BaseVariantOutputImpl
